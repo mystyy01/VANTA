@@ -1,0 +1,19 @@
+/
+├── apps/        # all executables and MT-Lang modules
+│   ├── mt-shell
+│   ├── mtc
+│   ├── ls
+│   └── echo
+├── core/        # kernel + bootloader + essential runtime
+│   ├── boot.bin
+│   └── kernel.bin
+├── users/       # user data
+│   └── mystyy/
+│       ├── docs/
+│       └── downloads/
+├── cfg/         # configs
+│   └── vanta.conf
+├── temp/        # temp files / caches
+└── dev/         # virtual devices
+    ├── console
+    └── null
