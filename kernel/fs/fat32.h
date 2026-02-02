@@ -70,6 +70,7 @@ struct fat32_fs {
     uint32_t root_cluster;
     uint32_t bytes_per_sector;
     uint32_t bytes_per_cluster;
+    uint32_t total_clusters;
 };
 
 // Initialize FAT32 filesystem

@@ -53,11 +53,16 @@ static int read_cluster(uint32_t cluster, void *buffer) {
     return ata_read_sectors(lba, fs.sectors_per_cluster, buffer);
 }
 
+static int write_cluster(uint32_t cluster, void *buffer) {
+    uint32_t lba = cluster_to_lba(cluster);
+    return ata_write_sectors(lba, fs.sectors_per_cluster, buffer);
+}
+
 // Get next cluster from FAT
 static uint32_t get_next_cluster(uint32_t cluster) {
-    uint32_t fat_offset = cluster * 4;
-    uint32_t fat_sector = fs.fat_start_lba + (fat_offset / fs.bytes_per_sector);
-    uint32_t entry_offset = fat_offset % fs.bytes_per_sector;
+    uint32_t fat_offset = cluster * 4; // get byte offset
+    uint32_t fat_sector = fs.fat_start_lba + (fat_offset / fs.bytes_per_sector); // find the sector using integer division to round down to the nearest sector
+    uint32_t entry_offset = fat_offset % fs.bytes_per_sector; // use modulo to get the clusters offset in the sector worked out in the previous calculation
 
     ata_read_sectors(fat_sector, 1, sector_buffer);
 
@@ -65,6 +70,76 @@ static uint32_t get_next_cluster(uint32_t cluster) {
     next &= 0x0FFFFFFF;  // Mask off high 4 bits
 
     return next;
+}
+
+static int set_fat_entry(uint32_t cluster, uint32_t value) {
+    uint32_t fat_offset = cluster * 4;
+    uint32_t fat_sector = fs.fat_start_lba + (fat_offset / fs.bytes_per_sector);
+    uint32_t entry_offset = fat_offset % fs.bytes_per_sector;
+
+    ata_read_sectors(fat_sector, 1, sector_buffer); // read to stop garbage memory in sector_buffer
+
+    uint32_t *ptr = (uint32_t *)(sector_buffer + entry_offset); // cast pointer to a 4 byte type at the position of the 4 byte write in terms of the whole disk, not just the cluster
+    *ptr = value; // set 4 byte *ptr to value
+
+    ata_write_sectors(fat_sector, 1, sector_buffer); // write the sector back to disk
+
+    return 0;
+}
+
+static uint32_t find_free_cluster(){
+    for (int i = 2; i < fs.total_clusters; i++){ 
+        uint32_t entry = get_next_cluster(i);
+        if (entry == 0x00000000){ // check if the cluster is empty
+            return i; 
+        }
+    }
+    return 0;
+}
+
+int fat32_mkdir(struct vfs_node *parent, const char *name){
+    uint32_t allocated_cluster = find_free_cluster(); // find free space to put the new directory
+    if (allocated_cluster == 0) return -1; // disk full
+    set_fat_entry(allocated_cluster, 0x0FFFFFFF); // mark as end of chain
+    memset(cluster_buffer, 0, fs.bytes_per_cluster); // set the cluster buffer to all 0s to initialize
+    struct fat32_dir_entry *dot = (struct fat32_dir_entry *)cluster_buffer; // treat the start of the cluster buffer as a directory entry (.)
+    struct fat32_dir_entry *dotdot = (struct fat32_dir_entry *)(cluster_buffer + 32);
+
+    // adding . entry
+    memcpy(dot->name, ".          ", 11);
+    dot->attr = 0x10;
+    dot->first_cluster_low = allocated_cluster & 0xFFFF;
+    dot->first_cluster_high = (allocated_cluster >> 16) & 0xFFFF;
+
+    // adding .. entry
+    memcpy(dotdot->name, "..         ", 11);
+    dotdot->attr = 0x10;
+    dotdot->first_cluster_low = parent->inode & 0xFFFF;
+    dotdot->first_cluster_high = (parent->inode >> 16) & 0xFFFF;
+
+    write_cluster(allocated_cluster, cluster_buffer);
+
+    read_cluster(parent->inode, cluster_buffer);
+    
+    int entries_per_cluster = fs.bytes_per_cluster / sizeof(struct fat32_dir_entry);
+
+    struct fat32_dir_entry *entries = (struct fat32_dir_entry *)cluster_buffer;
+
+    for (int i = 0; i < entries_per_cluster; i++){
+        if (entries[i].name[0] == 0x00){ // found an empty slot for the new directory
+            string_to_fat32_name(name, entries[i].name);
+            
+            entries[i].attr = 0x10;
+            entries[i].first_cluster_low = allocated_cluster & 0xFFFF;
+            entries[i].first_cluster_high = (allocated_cluster >> 16) & 0xFFFF;
+            entries[i].file_size = 0;
+
+            break;
+        }
+    }
+    write_cluster(parent->inode, cluster_buffer);
+    return 0;
+
 }
 
 // Check if cluster is end of chain
@@ -315,6 +390,9 @@ int fat32_init(uint32_t partition_lba) {
     fs.fat_start_lba = partition_lba + bpb->reserved_sectors;
     fs.cluster_start_lba = fs.fat_start_lba + (bpb->num_fats * bpb->fat_size_32);
     fs.root_cluster = bpb->root_cluster;
+
+    int data_sectors = bpb->total_sectors_32 - (bpb->reserved_sectors + bpb->num_fats * bpb->fat_size_32);
+    fs.total_clusters = data_sectors / bpb->sectors_per_cluster;
 
     // Set up root node
     memset(&root_node, 0, sizeof(root_node));
