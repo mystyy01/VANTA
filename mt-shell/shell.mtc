@@ -7,6 +7,8 @@ external string get_cwd()
 external string list_dir(string path)
 external string read_file(string path)
 external int set_cwd(string path)
+external int exec_path(string path)
+external void print_int(int n)
 
 // Simple built-in command handler
 int run_builtin(string cmd, string args) {
@@ -68,6 +70,18 @@ int run_builtin(string cmd, string args) {
         return 0
     }
 
+    if (cmd == "exec") {
+        if (args.length() == 0) {
+            mt_print("exec: missing file argument\n")
+            return 1
+        }
+        int rc = exec_path(args)
+        mt_print("program exited with code ")
+        print_int(rc)
+        mt_print("\n")
+        return rc
+    }
+
     return -1  // Not a builtin
 }
 
@@ -126,9 +140,17 @@ int shell_main() {
                 // Try builtin
                 int result = run_builtin(cmd, args)
                 if (result == -1) {
-                    mt_print("mt-shell: command not found: ")
-                    mt_print(cmd)
-                    mt_print("\n")
+                    // Attempt to execute as program (relative to cwd)
+                    int rc = exec_path(cmd)
+                    if (rc == -1) {
+                        mt_print("mt-shell: command not found: ")
+                        mt_print(cmd)
+                        mt_print("\n")
+                    } else {
+                        mt_print("program exited with code ")
+                        print_int(rc)
+                        mt_print("\n")
+                    }
                 }
             }
         }

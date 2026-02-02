@@ -391,6 +391,34 @@ char* get_cwd(void) {
     return cwd;
 }
 
+// Forward declaration
+void normalize_path(char* path);
+
+// Build an absolute path from cwd and an input path, then normalize.
+// out must be at least VFS_MAX_PATH bytes.
+static void build_full_path(const char* path, char* out) {
+    if (!path || !out) return;
+
+    if (path[0] == '/') {
+        strncpy(out, path, VFS_MAX_PATH - 1);
+        out[VFS_MAX_PATH - 1] = '\0';
+    } else {
+        int cwd_len = strlen(cwd);
+        strncpy(out, cwd, VFS_MAX_PATH - 1);
+        out[VFS_MAX_PATH - 1] = '\0';
+        if (cwd_len > 1 && out[cwd_len - 1] != '/') {
+            out[cwd_len] = '/';
+            out[cwd_len + 1] = '\0';
+        }
+        int remaining = VFS_MAX_PATH - strlen(out) - 1;
+        if (remaining > 0) {
+            strncat(out, path, remaining);
+        }
+    }
+
+    normalize_path(out);
+}
+
 // Helper function to normalize path components
 void normalize_path(char* path) {
     char* components[VFS_MAX_PATH / 2];
@@ -425,10 +453,8 @@ void normalize_path(char* path) {
             components[comp_count++] = ptr;
         }
         
-        // Restore character and move to next component
-        *end = comp_char;
+        // Move to next component (don't restore char - keep components null-terminated)
         ptr = (comp_char == '\0') ? end : end + 1;
-        if (*ptr == '/') ptr++; // Skip slash
     }
     
     // Rebuild normalized path
@@ -511,12 +537,16 @@ int set_cwd(const char* path) {
 }
 
 int file_exists(const char* path) {
-    struct vfs_node* node = vfs_resolve_path(path);
+    char full[VFS_MAX_PATH];
+    build_full_path(path, full);
+    struct vfs_node* node = vfs_resolve_path(full);
     return node != (void*)0;
 }
 
 char* read_file(const char* path) {
-    struct vfs_node* node = vfs_resolve_path(path);
+    char full[VFS_MAX_PATH];
+    build_full_path(path, full);
+    struct vfs_node* node = vfs_resolve_path(full);
     if (!node) return "";
     if (!(node->flags & VFS_FILE)) return "";
 
@@ -534,7 +564,9 @@ char* read_file(const char* path) {
 }
 
 int write_file(const char* path, const char* content) {
-    struct vfs_node* node = vfs_resolve_path(path);
+    char full[VFS_MAX_PATH];
+    build_full_path(path, full);
+    struct vfs_node* node = vfs_resolve_path(full);
     if (!node) return -1;
 
     int len = strlen(content);
@@ -618,21 +650,81 @@ char* list_dir(const char* path) {
 }
 
 // ============================================================================
-// Program Execution (placeholder - needs ELF loader)
+// Program Execution (ELF loader integration)
 // ============================================================================
 
-int exec_program(const char* path, char** args) {
-    // Check if file exists
-    struct vfs_node* node = vfs_resolve_path(path);
-    if (!node) {
-        return -1;  // File not found
+extern int elf_execute(struct vfs_node* node, char** args);
+
+// Try to resolve an executable path.
+// Returns node on success and writes absolute path into out (size VFS_MAX_PATH).
+static struct vfs_node* resolve_exec_path(const char* path, char* out) {
+    // Helper to extract basename
+    char base[VFS_MAX_NAME];
+    const char* p = path;
+    const char* last = path;
+    while (*p) {
+        if (*p == '/') {
+            last = p + 1;
+        }
+        p++;
+    }
+    // Copy basename (may be empty if path ends with '/')
+    int bi = 0;
+    while (last[bi] && last[bi] != '/' && bi < VFS_MAX_NAME - 1) {
+        base[bi] = last[bi];
+        bi++;
+    }
+    base[bi] = '\0';
+
+    // First attempt: path relative to cwd (or absolute as given)
+    build_full_path(path, out);
+    struct vfs_node* node = vfs_resolve_path(out);
+    if (node) return node;
+
+    // Second attempt: /apps/<path> for convenience when cwd is elsewhere
+    // Use basename to avoid accidental duplication of path segments
+    if (base[0] != '\0') {
+        char alt[VFS_MAX_PATH] = "/apps/";
+        int remaining = VFS_MAX_PATH - (int)strlen(alt) - 1;
+        if (remaining > 0) {
+            strncat(alt, base, remaining);
+            normalize_path(alt);
+            node = vfs_resolve_path(alt);
+            if (node) {
+                strncpy(out, alt, VFS_MAX_PATH - 1);
+                out[VFS_MAX_PATH - 1] = '\0';
+                return node;
+            }
+        }
     }
 
-    // TODO: Implement ELF loader
-    // For now, just report that execution isn't implemented
-    mt_print("exec: not implemented yet: ");
-    mt_print(path);
-    mt_print("\n");
+    return (struct vfs_node*)0;
+}
 
-    return -1;
+int exec_program(const char* path, char** args) {
+    char full[VFS_MAX_PATH];
+    struct vfs_node* node = resolve_exec_path(path, full);
+    if (!node) {
+        mt_print("exec: no such file: ");
+        mt_print(full);
+        mt_print("\n");
+        return -1;
+    }
+    if (!(node->flags & VFS_FILE)) {
+        mt_print("exec: not a file\n");
+        return -2;
+    }
+
+    int rc = elf_execute(node, args);
+    if (rc < 0) {
+        mt_print("exec failed with code ");
+        print_int(rc);
+        mt_print("\n");
+    }
+    return rc;
+}
+
+// Simple wrapper for mt-lang: executes a program with no arguments.
+int exec_path(const char* path) {
+    return exec_program(path, (char**)0);
 }

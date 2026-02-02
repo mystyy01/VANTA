@@ -22,6 +22,7 @@ x86_64-elf-gcc $CFLAGS -c kernel/drivers/ata.c -o ata.o
 x86_64-elf-gcc $CFLAGS -c kernel/drivers/keyboard.c -o keyboard.o
 x86_64-elf-gcc $CFLAGS -c kernel/fs/vfs.c -o vfs.o
 x86_64-elf-gcc $CFLAGS -c kernel/fs/fat32.c -o fat32.o
+x86_64-elf-gcc $CFLAGS -c kernel/elf_loader.c -o elf_loader.o
 
 # Compile mt-shell lib.c (C runtime for shell)
 echo "[4/8] Compiling mt-shell runtime..."
@@ -37,6 +38,7 @@ cd ..
 echo "[6/8] Linking kernel..."
 x86_64-elf-ld -T kernel/linker.ld -o kernel.bin \
     entry.o isr_asm.o kernel.o idt.o isr.o ata.o keyboard.o vfs.o fat32.o \
+    elf_loader.o \
     mt-shell/lib.o mt-shell/shell.o
 
 # Create boot disk image
