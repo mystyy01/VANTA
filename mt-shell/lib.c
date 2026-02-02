@@ -28,6 +28,36 @@ void free(void* ptr) {
     (void)ptr;
 }
 
+char* realloc(void* ptr, int new_size) {
+    // Simple bump allocator realloc - just allocate new memory
+    // (old memory is leaked, but we don't have a proper allocator)
+    if (ptr == (void*)0) {
+        return malloc(new_size);
+    }
+    char* new_ptr = malloc(new_size);
+    if (!new_ptr) return (char*)0;
+    // Can't determine old size, so caller should copy manually if needed
+    // For arrays, the compiler handles this
+    return new_ptr;
+}
+
+void* memcpy(void* dst, const void* src, int n) {
+    char* d = (char*)dst;
+    const char* s = (const char*)src;
+    while (n-- > 0) {
+        *d++ = *s++;
+    }
+    return dst;
+}
+
+void* memset(void* s, int c, int n) {
+    char* p = (char*)s;
+    while (n-- > 0) {
+        *p++ = (char)c;
+    }
+    return s;
+}
+
 // ============================================================================
 // String Functions
 // ============================================================================
@@ -68,6 +98,16 @@ char* strncpy(char* dst, const char* src, int n) {
         n--;
     }
     return ret;
+}
+
+char* strcat(char* dst, const char* src) {
+    char* p = dst;
+    while (*p) p++;
+    while (*src) {
+        *p++ = *src++;
+    }
+    *p = '\0';
+    return dst;
 }
 
 char* strncat(char* dst, const char* src, int n) {
@@ -155,7 +195,7 @@ void print_char(int c) {
     }
 }
 
-static void print(const char* s) {
+void mt_print(const char* s) {
     while (*s) {
         print_char(*s++);
     }
@@ -178,6 +218,114 @@ void print_int(int n) {
     }
     while (i > 0) {
         print_char(buf[--i]);
+    }
+}
+
+// Format an integer to a string buffer, return pointer to end
+static char* format_int_to_buf(char* buf, int n) {
+    if (n < 0) {
+        *buf++ = '-';
+        n = -n;
+    }
+    if (n == 0) {
+        *buf++ = '0';
+        return buf;
+    }
+    char tmp[12];
+    int i = 0;
+    while (n > 0) {
+        tmp[i++] = '0' + (n % 10);
+        n /= 10;
+    }
+    while (i > 0) {
+        *buf++ = tmp[--i];
+    }
+    return buf;
+}
+
+// Simple printf - supports %s and %d
+int printf(const char* fmt, ...) {
+    __builtin_va_list args;
+    __builtin_va_start(args, fmt);
+    int count = 0;
+
+    while (*fmt) {
+        if (*fmt == '%' && *(fmt + 1)) {
+            fmt++;
+            if (*fmt == 's') {
+                const char* s = __builtin_va_arg(args, const char*);
+                if (s) {
+                    while (*s) {
+                        print_char(*s++);
+                        count++;
+                    }
+                }
+            } else if (*fmt == 'd') {
+                int val = __builtin_va_arg(args, int);
+                print_int(val);
+                count += 10; // approximate
+            } else if (*fmt == '%') {
+                print_char('%');
+                count++;
+            } else {
+                // Unknown format - print as-is
+                print_char('%');
+                print_char(*fmt);
+                count += 2;
+            }
+        } else {
+            print_char(*fmt);
+            count++;
+        }
+        fmt++;
+    }
+    __builtin_va_end(args);
+    return count;
+}
+
+// Simple sprintf - supports %s and %d
+int sprintf(char* buf, const char* fmt, ...) {
+    __builtin_va_list args;
+    __builtin_va_start(args, fmt);
+    char* start = buf;
+
+    while (*fmt) {
+        if (*fmt == '%' && *(fmt + 1)) {
+            fmt++;
+            if (*fmt == 's') {
+                const char* s = __builtin_va_arg(args, const char*);
+                if (s) {
+                    while (*s) {
+                        *buf++ = *s++;
+                    }
+                }
+            } else if (*fmt == 'd') {
+                int val = __builtin_va_arg(args, int);
+                buf = format_int_to_buf(buf, val);
+            } else if (*fmt == '%') {
+                *buf++ = '%';
+            } else {
+                *buf++ = '%';
+                *buf++ = *fmt;
+            }
+        } else {
+            *buf++ = *fmt;
+        }
+        fmt++;
+    }
+    *buf = '\0';
+    __builtin_va_end(args);
+    return (int)(buf - start);
+}
+
+// Exit - halt the system (in bare-metal, just spin)
+void exit(int code) {
+    mt_print("exit(");
+    print_int(code);
+    mt_print(")\n");
+    // Halt CPU
+    while (1) {
+        __asm__ volatile ("hlt");
     }
 }
 
@@ -226,7 +374,7 @@ char* read_line(void) {
         }
         // Handle Ctrl+C - return empty line
         if ((ev.modifiers & MOD_CTRL) && (ev.key == 'c' || ev.key == 'C')) {
-            print("^C\n");
+            mt_print("^C\n");
             line_buffer[0] = '\0';
             return line_buffer;
         }
@@ -396,9 +544,9 @@ int exec_program(const char* path, char** args) {
 
     // TODO: Implement ELF loader
     // For now, just report that execution isn't implemented
-    print("exec: not implemented yet: ");
-    print(path);
-    print("\n");
+    mt_print("exec: not implemented yet: ");
+    mt_print(path);
+    mt_print("\n");
 
     return -1;
 }

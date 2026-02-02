@@ -27,7 +27,7 @@ mov ax, 0x0000
 mov es, ax ; now es = 0, cant set it directly
 
 mov ah, 0x02
-mov al, 0x40 ; read 64 sectors (32KB)
+mov al, 0x80 ; read 128 sectors (64KB)
 mov ch, 0x00
 mov cl, 0x02
 mov dh, 0x00
