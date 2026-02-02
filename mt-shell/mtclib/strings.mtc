@@ -1,0 +1,201 @@
+// Bare-metal string library using lib.c externals
+// No libc dependencies
+
+// External declarations for lib.c functions
+external int strlen(string s)
+external string malloc(int size)
+external void char_to_string(int c, string out)
+external string concat_strings(string a, string b)
+external int tolower(int code)
+external int strcmp(string a, string b)
+external string strcpy(string dst, string src)
+
+// Get the ASCII code of a single-character string
+int char_code(string ch) {
+    if (strcmp(ch, "0") == 0) { return 48 }
+    if (strcmp(ch, "1") == 0) { return 49 }
+    if (strcmp(ch, "2") == 0) { return 50 }
+    if (strcmp(ch, "3") == 0) { return 51 }
+    if (strcmp(ch, "4") == 0) { return 52 }
+    if (strcmp(ch, "5") == 0) { return 53 }
+    if (strcmp(ch, "6") == 0) { return 54 }
+    if (strcmp(ch, "7") == 0) { return 55 }
+    if (strcmp(ch, "8") == 0) { return 56 }
+    if (strcmp(ch, "9") == 0) { return 57 }
+    if (strcmp(ch, "A") == 0) { return 65 }
+    if (strcmp(ch, "B") == 0) { return 66 }
+    if (strcmp(ch, "C") == 0) { return 67 }
+    if (strcmp(ch, "D") == 0) { return 68 }
+    if (strcmp(ch, "E") == 0) { return 69 }
+    if (strcmp(ch, "F") == 0) { return 70 }
+    if (strcmp(ch, "G") == 0) { return 71 }
+    if (strcmp(ch, "H") == 0) { return 72 }
+    if (strcmp(ch, "I") == 0) { return 73 }
+    if (strcmp(ch, "J") == 0) { return 74 }
+    if (strcmp(ch, "K") == 0) { return 75 }
+    if (strcmp(ch, "L") == 0) { return 76 }
+    if (strcmp(ch, "M") == 0) { return 77 }
+    if (strcmp(ch, "N") == 0) { return 78 }
+    if (strcmp(ch, "O") == 0) { return 79 }
+    if (strcmp(ch, "P") == 0) { return 80 }
+    if (strcmp(ch, "Q") == 0) { return 81 }
+    if (strcmp(ch, "R") == 0) { return 82 }
+    if (strcmp(ch, "S") == 0) { return 83 }
+    if (strcmp(ch, "T") == 0) { return 84 }
+    if (strcmp(ch, "U") == 0) { return 85 }
+    if (strcmp(ch, "V") == 0) { return 86 }
+    if (strcmp(ch, "W") == 0) { return 87 }
+    if (strcmp(ch, "X") == 0) { return 88 }
+    if (strcmp(ch, "Y") == 0) { return 89 }
+    if (strcmp(ch, "Z") == 0) { return 90 }
+    if (strcmp(ch, "a") == 0) { return 97 }
+    if (strcmp(ch, "b") == 0) { return 98 }
+    if (strcmp(ch, "c") == 0) { return 99 }
+    if (strcmp(ch, "d") == 0) { return 100 }
+    if (strcmp(ch, "e") == 0) { return 101 }
+    if (strcmp(ch, "f") == 0) { return 102 }
+    if (strcmp(ch, "g") == 0) { return 103 }
+    if (strcmp(ch, "h") == 0) { return 104 }
+    if (strcmp(ch, "i") == 0) { return 105 }
+    if (strcmp(ch, "j") == 0) { return 106 }
+    if (strcmp(ch, "k") == 0) { return 107 }
+    if (strcmp(ch, "l") == 0) { return 108 }
+    if (strcmp(ch, "m") == 0) { return 109 }
+    if (strcmp(ch, "n") == 0) { return 110 }
+    if (strcmp(ch, "o") == 0) { return 111 }
+    if (strcmp(ch, "p") == 0) { return 112 }
+    if (strcmp(ch, "q") == 0) { return 113 }
+    if (strcmp(ch, "r") == 0) { return 114 }
+    if (strcmp(ch, "s") == 0) { return 115 }
+    if (strcmp(ch, "t") == 0) { return 116 }
+    if (strcmp(ch, "u") == 0) { return 117 }
+    if (strcmp(ch, "v") == 0) { return 118 }
+    if (strcmp(ch, "w") == 0) { return 119 }
+    if (strcmp(ch, "x") == 0) { return 120 }
+    if (strcmp(ch, "y") == 0) { return 121 }
+    if (strcmp(ch, "z") == 0) { return 122 }
+    if (strcmp(ch, " ") == 0) { return 32 }
+    if (strcmp(ch, "_") == 0) { return 95 }
+    if (strcmp(ch, "-") == 0) { return 45 }
+    if (strcmp(ch, ".") == 0) { return 46 }
+    if (strcmp(ch, ",") == 0) { return 44 }
+    if (strcmp(ch, ":") == 0) { return 58 }
+    if (strcmp(ch, ";") == 0) { return 59 }
+    if (strcmp(ch, "?") == 0) { return 63 }
+    if (strcmp(ch, "(") == 0) { return 40 }
+    if (strcmp(ch, ")") == 0) { return 41 }
+    if (strcmp(ch, "[") == 0) { return 91 }
+    if (strcmp(ch, "]") == 0) { return 93 }
+    if (strcmp(ch, "{") == 0) { return 123 }
+    if (strcmp(ch, "}") == 0) { return 125 }
+    if (strcmp(ch, "+") == 0) { return 43 }
+    if (strcmp(ch, "=") == 0) { return 61 }
+    if (strcmp(ch, "<") == 0) { return 60 }
+    if (strcmp(ch, ">") == 0) { return 62 }
+    if (strcmp(ch, "/") == 0) { return 47 }
+    if (strcmp(ch, "*") == 0) { return 42 }
+    if (strcmp(ch, "&") == 0) { return 38 }
+    if (strcmp(ch, "|") == 0) { return 124 }
+    if (strcmp(ch, "^") == 0) { return 94 }
+    if (strcmp(ch, "%") == 0) { return 37 }
+    if (strcmp(ch, "#") == 0) { return 35 }
+    if (strcmp(ch, "@") == 0) { return 64 }
+    if (strcmp(ch, "$") == 0) { return 36 }
+    if (strcmp(ch, "~") == 0) { return 126 }
+    if (strcmp(ch, "`") == 0) { return 96 }
+    return 0
+}
+
+// Convert ASCII code back to single-character string
+string code_to_char(int code) {
+    string buf = malloc(2)
+    char_to_string(code, buf)
+    return buf
+}
+
+// Check if string contains only alphanumeric characters
+bool isalnum(string text) {
+    int len = strlen(text)
+    if (len == 0) {
+        return false
+    }
+    int i = 0
+    while (i < len) {
+        string ch = text[i]
+        int code = char_code(ch)
+        if (code == 0) {
+            return false
+        }
+        // Check if digit (48-57) or uppercase (65-90) or lowercase (97-122)
+        bool valid = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+        if (valid == false) {
+            return false
+        }
+        set i = i + 1
+    }
+    return true
+}
+
+// Check if string contains only alphabetic characters
+bool isalpha(string text) {
+    int len = strlen(text)
+    if (len == 0) {
+        return false
+    }
+    int i = 0
+    while (i < len) {
+        string ch = text[i]
+        int code = char_code(ch)
+        // A-Z (65-90) or a-z (97-122)
+        if (code >= 65 && code <= 90) {
+            set i = i + 1
+        } else {
+            if (code >= 97 && code <= 122) {
+                set i = i + 1
+            } else {
+                return false
+            }
+        }
+    }
+    return true
+}
+
+// Check if single character string is a digit
+bool isdigit(string ch) {
+    int code = char_code(ch)
+    return code >= 48 && code <= 57
+}
+
+// Convert string to lowercase
+string lower(string text) {
+    int len = strlen(text)
+    if (len == 0) {
+        return ""
+    }
+    string result = ""
+    int i = 0
+    while (i < len) {
+        string ch = text[i]
+        int code = char_code(ch)
+        int lower_code = tolower(code)
+        string lower_char = code_to_char(lower_code)
+        set result = concat_strings(result, lower_char)
+        set i = i + 1
+    }
+    return result
+}
+
+// Concatenate two strings
+string concat(string a, string b) {
+    return concat_strings(a, b)
+}
+
+// Get string length
+int length(string text) {
+    return strlen(text)
+}
+
+// Check if two strings are equal
+bool equals(string a, string b) {
+    return strcmp(a, b) == 0
+}

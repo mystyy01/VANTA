@@ -1,0 +1,496 @@
+from mtclib.iter use range, strarray // custom iter module SEPERATE from stdlib.iter that has no libc functions
+from mtclib.strings use isdigit, isalnum, lower, isalpha
+external string malloc(int size)
+array KEYWORDS = ["while", "break", "if", "elif", "else", "for", "set", "true", "false", "in"]
+array SINGLE_CHAR_SYMBOLS = ["(", ")", "[", "]", "{", "}", ",", ".", ":", "!", "+", "-", "*", "/", "=", ">", "<", "|", "&", ";"]
+array DOUBLE_CHAR_SYMBOLS = ["==", "!=", "+=", ">=", "<=", "&&", "||", ">>", "<<"]
+array QUOTES = ['"', "'"]
+array WHITESPACE = [" ", "\t", "\n"] 
+
+class Token{
+    arg string type = ""
+    arg string value = ""
+    arg int line = 0
+    arg int column = 0
+}
+class ShellError extends Exception{
+    arg string message
+    arg string severity = ""
+    void raise(){
+        // DEBUG
+    }
+}
+class Tokenizer{
+    arg string cmd = ""
+    int position = 0
+    int line = 1
+    int column = 1
+
+
+    string current_char(){
+        // DEBUG
+        if (this.position >= this.cmd.length()){
+            return null
+        }
+        return this.cmd[this.position]
+    }
+
+    void advance(int offset = 1){
+        // DEBUG
+        for (i in range(offset)){
+            if (this.position < this.cmd.length()){
+                if (this.cmd[this.position] == "\n"){
+                    set this.line = this.line + 1
+                    set this.column = 1
+                } else{
+                    set this.column = this.column + 1
+                }
+            }
+            set this.position = this.position + 1
+        }
+    }
+
+    bool is_at_end(){
+        // DEBUG
+        if (this.position >= this.cmd.length()){
+            return true
+        }
+        return false
+    }
+
+    string peek_next(){
+        // DEBUG
+        if ((this.position + 1) >= this.cmd.length()){
+            return null
+        }
+        return this.cmd[this.position+1]
+    }
+
+    void skip_whitespace(){
+        // DEBUG
+        while (this.is_at_end() == false){
+            if ((this.current_char() in WHITESPACE) == false){
+                break
+            }
+            this.advance()
+        }
+    }
+
+    void skip_comment(){
+        if (this.is_at_end() == false){
+            if (this.current_char() == "/"){
+                if (this.peek_next() == "/"){
+                    // DEBUG
+                    this.advance()
+                    this.advance()
+                    while (this.is_at_end() == false){
+                        if (this.current_char() == "\n"){
+                            break
+                        }
+                        this.advance()
+                    }
+                }
+            }
+        }
+    }
+
+    Token read_word(){
+        string word = ""
+        int start_line = this.line
+        int start_column = this.column
+        while (this.is_at_end() == false){
+            string c = this.current_char()
+            if (isalnum(c) == false){
+                if (c != "_"){
+                    break
+                }
+            }
+            set word = word + c
+            this.advance()
+        }
+        // DEBUG
+        if (word in KEYWORDS){
+            return new Token("KEYWORD", word, start_line, start_column)
+        }
+        else{
+            return new Token("NAME", word, start_line, start_column)
+        }
+    }
+
+    Token read_number(){
+        string number = ""
+        bool has_decimal = false
+        bool has_exponent = false
+        int start_line = this.line
+        int start_column = this.column
+
+        while (this.is_at_end() == false){
+            if (isdigit(this.current_char()) == false){
+                break
+            }
+            set number = number + this.current_char()
+            this.advance()
+        }
+
+        if (this.is_at_end() == false){
+            if (this.current_char() == "."){
+                set has_decimal = true
+                set number = number + "."
+                this.advance()
+                bool found_digits = false
+                while (this.is_at_end() == false){
+                    if (isdigit(this.current_char()) == false){
+                        break
+                    }
+                    set found_digits = true
+                    set number = number + this.current_char()
+                    this.advance()
+                }
+                if (found_digits == false){
+                    ShellError error = new ShellError("Invalid float literal at line " + str(start_line) + ": expected digits after decimal point", "ERROR")
+                    throw error
+                }
+            }
+        }
+
+        if (this.is_at_end() == false){
+            if (lower(this.current_char()) == "e"){
+                set has_exponent = true
+                set number = number + "e"
+                this.advance()
+                array exponents = ["+", "-"]
+                if (this.is_at_end() == false){
+                    if (this.current_char() in exponents){
+                        set number = number + this.current_char()
+                        this.advance()
+                    }
+                }
+                bool found_exp_digits = false
+                while (this.is_at_end() == false){
+                    if (isdigit(this.current_char()) == false){
+                        break
+                    }
+                    set found_exp_digits = true
+                    set number = number + this.current_char()
+                    this.advance()
+                }
+                if (found_exp_digits == false){
+                    ShellError error = new ShellError("Invalid float literal at line " + str(start_line) + ": expected digits in exponent", "ERROR")
+                    throw error
+                }
+            }
+        }
+
+        bool is_float = has_decimal || has_exponent
+        string token_type = ""
+        if (is_float){
+            set token_type = "FLOAT_LITERAL"
+        } else{
+            set token_type = "INTEGER_LITERAL"
+        }
+
+        // DEBUG
+        return new Token(token_type, number, start_line, start_column)
+    }
+
+    Token read_string(){
+        string new_str = ""
+        if ((this.current_char() in QUOTES) == false){
+            return null
+        }
+        string quote_char = this.current_char()
+        int start_line = this.line
+        int start_column = this.column
+        this.advance()
+        while (this.is_at_end() == false){
+            if (this.current_char() == quote_char){
+                break
+            }
+            if (this.current_char() == "\\"){
+                this.advance()
+                if (this.is_at_end()){
+                    break
+                }
+                string escape_char = this.current_char()
+                if (escape_char == "n"){
+                    set new_str = new_str + "\n"
+                }
+                elif (escape_char == "t"){
+                    set new_str = new_str + "\t"
+                }
+                elif (escape_char == "r"){
+                    set new_str = new_str + "\r"
+                }
+                elif (escape_char == "\\"){
+                    set new_str = new_str + "\\"
+                }
+                elif (escape_char == '"'){
+                    set new_str = new_str + '"'
+                }
+                elif (escape_char == "'"){
+                    set new_str = new_str + "'"
+                }
+                elif (escape_char == "0"){
+                    set new_str = new_str + "\0"
+                }
+                else{
+                    set new_str = new_str + "\\" + escape_char
+                }
+            }
+            else{
+                set new_str = new_str + this.current_char()
+            }
+            this.advance()
+        }
+
+        if (this.is_at_end()){
+            // DEBUG
+            string error_message = "Unterminated string literal starting at line " + str(start_line) + ", column " + str(start_column)
+            throw new ShellError(error_message, "ERROR")
+        }
+
+        this.advance()
+        // DEBUG
+        return new Token("STRING", new_str, start_line, start_column)
+    }
+
+    Token read_symbol(){
+        if (this.is_at_end()){
+            return null
+        }
+
+        // Check for comment
+        if (this.current_char() == "/"){
+            if (this.peek_next() == "/"){
+                this.advance(2)
+                while (this.is_at_end() == false){
+                    if (this.current_char() == "\n"){
+                        break
+                    }
+                    this.advance()
+                }
+                return null
+            }
+        }
+
+        // Check for double char symbols
+        string next = this.peek_next()
+        if (next != null){
+            string double_sym = this.current_char() + next
+            if (double_sym in DOUBLE_CHAR_SYMBOLS){
+                Token token = new Token("SYMBOL", double_sym, this.line, this.column)
+                this.advance(2)
+                return token
+            }
+        }
+
+        // Check for single char symbols
+        if (this.current_char() in SINGLE_CHAR_SYMBOLS){
+            Token token = new Token("SYMBOL", this.current_char(), this.line, this.column)
+            this.advance()
+            
+
+            return token
+        }
+
+        // Unknown symbol
+        
+
+        throw new ShellError("Unknown symbol '" + this.current_char() + "' at line " + str(this.line) + ", column " + str(this.column), "ERROR")
+    }
+
+    Token read_variable(){
+        // Reads $VAR, $1, $_VAR, or ${VAR}
+        int start_line = this.line
+        int start_column = this.column
+        this.advance() // consume $
+
+        if (this.is_at_end()){
+            return new Token("VARIABLE", "", start_line, start_column)
+        }
+
+        string var_name = ""
+
+        // Check for braced variable ${VAR}
+        if (this.current_char() == "{"){
+            this.advance() // consume {
+            while (this.is_at_end() == false){
+                if (this.current_char() == "}"){
+                    this.advance() // consume }
+                    break
+                }
+                set var_name = var_name + this.current_char()
+                this.advance()
+            }
+            return new Token("VARIABLE", var_name, start_line, start_column)
+        }
+
+        // Check for special variables $0-$9, $?, $!, $$, $#, $@, $*
+        array special_vars = ["?", "!", "$", "#", "@", "*"]
+        if (isdigit(this.current_char())){
+            set var_name = this.current_char()
+            this.advance()
+            return new Token("VARIABLE", var_name, start_line, start_column)
+        }
+        if (this.current_char() in special_vars){
+            set var_name = this.current_char()
+            this.advance()
+            return new Token("VARIABLE", var_name, start_line, start_column)
+        }
+
+        // Regular variable name: starts with alpha or _, followed by alnum or _
+        if (isalpha(this.current_char()) || this.current_char() == "_"){
+            while (this.is_at_end() == false){
+                string c = this.current_char()
+                if (isalnum(c) == false){
+                    if (c != "_"){
+                        break
+                    }
+                }
+                set var_name = var_name + c
+                this.advance()
+            }
+        }
+
+        return new Token("VARIABLE", var_name, start_line, start_column)
+    }
+
+    Token read_home(){
+        // Reads ~ alone, ~/path, or ~username
+        int start_line = this.line
+        int start_column = this.column
+        this.advance() // consume ~
+
+        string user = ""
+
+        // Check if followed by / or whitespace (plain home)
+        if (this.is_at_end()){
+            return new Token("HOME", "", start_line, start_column)
+        }
+
+        // ~/path case - just return ~ token, path handled separately
+        if (this.current_char() == "/"){
+            return new Token("HOME", "", start_line, start_column)
+        }
+
+        // Whitespace after ~ - plain home
+        if (this.current_char() in WHITESPACE){
+            return new Token("HOME", "", start_line, start_column)
+        }
+
+        // ~username case
+        if (isalpha(this.current_char()) || this.current_char() == "_"){
+            while (this.is_at_end() == false){
+                string c = this.current_char()
+                if (isalnum(c) == false){
+                    if (c != "_"){
+                        break
+                    }
+                }
+                set user = user + c
+                this.advance()
+            }
+        }
+
+        return new Token("HOME", user, start_line, start_column)
+    }
+
+    array tokenize(){
+        
+
+        array<Token> tokens = []
+        
+
+        while (this.is_at_end() == false){
+            
+
+            this.skip_whitespace()
+            this.skip_comment()
+            this.skip_whitespace()
+            
+
+            if (this.is_at_end() == true){
+                
+
+                break
+            }
+            
+
+            if (this.current_char() in QUOTES){
+                
+
+                tokens.append(this.read_string())
+            }
+            elif (this.current_char() == "-"){
+                string next_char = this.peek_next()
+                bool is_negative_num = false
+                if (next_char != null){
+                    if (isdigit(next_char)){
+                        set is_negative_num = true
+                    }
+                }
+                if (is_negative_num){
+                    this.advance()
+                    string number = "-"
+                    string token_type = ""
+                    int start_line = this.line
+                    int start_column = this.column
+                    Token num_token = this.read_number()
+                    set number = number + num_token.value
+
+                    if (num_token.type == "FLOAT_LITERAL"){
+                        set token_type = "FLOAT_LITERAL"
+                    }
+                    else{
+                        set token_type = "INTEGER_LITERAL"
+                    }
+                    Token token = new Token(token_type, number, start_line, start_column)
+                    tokens.append(token)
+                    
+
+                }
+                else{
+                    tokens.append(this.read_symbol())
+                }
+            }
+            elif (this.current_char() == "$"){
+                tokens.append(this.read_variable())
+            }
+            elif (this.current_char() == "~"){
+                tokens.append(this.read_home())
+            }
+            elif (this.current_char() in SINGLE_CHAR_SYMBOLS){
+                Token symbol_token = this.read_symbol()
+                if (symbol_token != null){
+                    tokens.append(symbol_token)
+                }
+            }
+            elif (isalpha(this.current_char())){
+                tokens.append(this.read_word())
+            }
+            elif (this.current_char() == "_"){
+                tokens.append(this.read_word())
+            }
+            elif (isdigit(this.current_char())){
+                tokens.append(this.read_number())
+            }
+            else{
+                string char = ""
+                if (this.is_at_end() == false){
+                    set char = this.current_char()
+                }
+                else{
+                    set char = "EOF"
+                }
+                // DEBUG
+                
+
+                throw new ShellError("Tokenizer failed at char " + str(this.position) + ": '" + char + "' (line " + str(this.line) + ", col " + str(this.column) + ")", "ERROR")
+            }
+        }
+        // DEBUG
+        
+
+        return tokens
+    }
+}

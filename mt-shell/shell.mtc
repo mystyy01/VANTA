@@ -1,0 +1,139 @@
+from tokenizer use Tokenizer, ShellError
+
+// External declarations
+external void print(string s)
+external string read_line()
+external string get_cwd()
+external string list_dir(string path)
+external string read_file(string path)
+external int set_cwd(string path)
+
+// Simple built-in command handler
+int run_builtin(string cmd, string args) {
+    if (cmd == "help") {
+        print("mt-shell builtins:\n")
+        print("  help       - show this help\n")
+        print("  ls [path]  - list directory\n")
+        print("  cd <path>  - change directory\n")
+        print("  cat <file> - print file contents\n")
+        print("  pwd        - print working directory\n")
+        print("  echo <...> - print arguments\n")
+        print("  exit       - exit shell\n")
+        return 0
+    }
+
+    if (cmd == "pwd") {
+        string cwd = get_cwd()
+        print(cwd)
+        print("\n")
+        return 0
+    }
+
+    if (cmd == "ls") {
+        string path = get_cwd()
+        if (args.length() > 0) {
+            set path = args
+        }
+        string entries = list_dir(path)
+        print(entries)
+        return 0
+    }
+
+    if (cmd == "cd") {
+        if (args.length() == 0) {
+            set args = "/"
+        }
+        int result = set_cwd(args)
+        if (result != 0) {
+            print("cd: no such directory: ")
+            print(args)
+            print("\n")
+        }
+        return result
+    }
+
+    if (cmd == "cat") {
+        if (args.length() == 0) {
+            print("cat: missing file argument\n")
+            return 1
+        }
+        string content = read_file(args)
+        print(content)
+        return 0
+    }
+
+    if (cmd == "echo") {
+        print(args)
+        print("\n")
+        return 0
+    }
+
+    return -1  // Not a builtin
+}
+
+// Main shell loop - called from kernel
+int shell_main() {
+    print("mt-shell v0.1 - VANTA OS\n")
+    print("Type 'help' for available commands\n\n")
+
+    bool running = true
+    while (running) {
+        // Print prompt
+        string cwd = get_cwd()
+        print(cwd)
+        print(" $ ")
+
+        // Read input
+        string input = read_line()
+
+        // Skip empty lines
+        if (input.length() == 0) {
+            // Do nothing, loop again
+        } else {
+            // Check for exit
+            if (input == "exit") {
+                set running = false
+            } else {
+                // Parse simple command: first word is command, rest is args
+                string cmd = ""
+                string args = ""
+                int i = 0
+
+                // Get command (first word)
+                while (i < input.length()) {
+                    string c = input[i]
+                    if (c == " ") {
+                        break
+                    }
+                    set cmd = cmd + c
+                    set i = i + 1
+                }
+
+                // Skip spaces
+                while (i < input.length()) {
+                    if (input[i] != " ") {
+                        break
+                    }
+                    set i = i + 1
+                }
+
+                // Rest is argument
+                while (i < input.length()) {
+                    set args = args + input[i]
+                    set i = i + 1
+                }
+
+                // Try builtin
+                int result = run_builtin(cmd, args)
+                if (result == -1) {
+                    print("mt-shell: command not found: ")
+                    print(cmd)
+                    print("\n")
+                }
+            }
+        }
+    }
+
+    print("Goodbye!\n")
+    return 0
+}

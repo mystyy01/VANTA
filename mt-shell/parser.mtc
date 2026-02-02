@@ -1,0 +1,581 @@
+from mtclib.iter use range
+from tokenizer use Token, ShellError
+external string malloc(int size)
+// AST Node classes
+class ASTNode {
+    arg string node_type = ""
+}
+
+class Command extends ASTNode {
+    arg string name = ""
+    arg array args = []
+    arg array redirects = []
+}
+
+class Pipeline extends ASTNode {
+    arg array commands = []  // list of Command nodes
+}
+
+class AndOr extends ASTNode {
+    arg ASTNode left = null
+    arg string operator = ""  // "&&" or "||"
+    arg ASTNode right = null
+}
+
+class Redirect extends ASTNode {
+    arg string direction = ""  // ">", ">>", "<", "<<"
+    arg string target = ""
+}
+
+class Assignment extends ASTNode {
+    arg string name = ""
+    arg ASTNode value = null
+}
+
+class Variable extends ASTNode {
+    arg string name = ""
+}
+
+class HomePath extends ASTNode {
+    arg string user = ""  // empty for current user
+}
+
+class StringLiteral extends ASTNode {
+    arg string value = ""
+}
+
+class NumberLiteral extends ASTNode {
+    arg string value = ""
+    arg bool is_float = false
+}
+
+class BoolLiteral extends ASTNode {
+    arg bool value = false
+}
+
+class BinaryExpr extends ASTNode {
+    arg ASTNode left = null
+    arg string operator = ""
+    arg ASTNode right = null
+}
+
+class UnaryExpr extends ASTNode {
+    arg string operator = ""
+    arg ASTNode operand = null
+}
+
+class IfStatement extends ASTNode {
+    arg ASTNode condition = null
+    arg array body = []
+    arg array elif_branches = []  // list of {condition, body}
+    arg array else_body = []
+}
+
+class ElifBranch extends ASTNode {
+    arg ASTNode condition = null
+    arg array body = []
+}
+
+class WhileStatement extends ASTNode {
+    arg ASTNode condition = null
+    arg array body = []
+}
+
+class ForStatement extends ASTNode {
+    arg string var_name = ""
+    arg ASTNode iterable = null
+    arg array body = []
+}
+
+class BreakStatement extends ASTNode {
+}
+
+class Block extends ASTNode {
+    arg array statements = []
+}
+
+class CommandList extends ASTNode {
+    arg array commands = []  // separated by ; or newlines
+}
+
+// Parser class
+class Parser {
+    arg array tokens = []
+    int position = 0
+
+    Token current_token() {
+        if (this.position >= this.tokens.length()) {
+            return null
+        }
+        return this.tokens[this.position]
+    }
+
+    Token peek_token(int offset = 1) {
+        int pos = this.position + offset
+        if (pos >= this.tokens.length()) {
+            return null
+        }
+        return this.tokens[pos]
+    }
+
+    void advance() {
+        set this.position = this.position + 1
+    }
+
+    bool is_at_end() {
+        return this.position >= this.tokens.length()
+    }
+
+    bool check(string type, string value = "") {
+        Token tok = this.current_token()
+        if (tok == null) {
+            return false
+        }
+        if (tok.type != type) {
+            return false
+        }
+        if (value != "") {
+            if (tok.value != value) {
+                return false
+            }
+        }
+        return true
+    }
+
+    bool match(string type, string value = "") {
+        if (this.check(type, value)) {
+            this.advance()
+            return true
+        }
+        return false
+    }
+
+    Token expect(string type, string value = "") {
+        Token tok = this.current_token()
+        if (tok == null) {
+            throw new ShellError("Unexpected end of input, expected " + type, "ERROR")
+        }
+        if (tok.type != type) {
+            throw new ShellError("Expected " + type + " but got " + tok.type + " at line " + str(tok.line), "ERROR")
+        }
+        if (value != "") {
+            if (tok.value != value) {
+                throw new ShellError("Expected '" + value + "' but got '" + tok.value + "' at line " + str(tok.line), "ERROR")
+            }
+        }
+        this.advance()
+        return tok
+    }
+
+    void skip_semicolons() {
+        while (this.check("SYMBOL", ";")) {
+            this.advance()
+        }
+    }
+
+    // Main parse entry point
+    Block parse() {
+        array statements = []
+        this.skip_semicolons()
+        while (this.is_at_end() == false) {
+            ASTNode stmt = this.parse_statement()
+            if (stmt != null) {
+                statements.append(stmt)
+            }
+            this.skip_semicolons()
+        }
+        return new Block(statements)
+    }
+
+    ASTNode parse_statement() {
+        Token tok = this.current_token()
+        if (tok == null) {
+            return null
+        }
+
+        // Control flow
+        if (tok.type == "KEYWORD") {
+            if (tok.value == "if") {
+                return this.parse_if()
+            }
+            if (tok.value == "while") {
+                return this.parse_while()
+            }
+            if (tok.value == "for") {
+                return this.parse_for()
+            }
+            if (tok.value == "break") {
+                this.advance()
+                return new BreakStatement()
+            }
+            if (tok.value == "set") {
+                return this.parse_assignment()
+            }
+        }
+
+        // Otherwise parse as command/pipeline/expression
+        return this.parse_and_or()
+    }
+
+    ASTNode parse_and_or() {
+        ASTNode left = this.parse_pipeline()
+
+        while (this.check("SYMBOL", "&&") || this.check("SYMBOL", "||")) {
+            Token op_tok = this.current_token()
+            string op = op_tok.value
+            this.advance()
+            ASTNode right = this.parse_pipeline()
+            set left = new AndOr(left, op, right)
+        }
+
+        return left
+    }
+
+    ASTNode parse_pipeline() {
+        ASTNode first = this.parse_command()
+
+        if (this.check("SYMBOL", "|") == false) {
+            return first
+        }
+
+        array commands = [first]
+        while (this.check("SYMBOL", "|")) {
+            // Make sure it's not ||
+            Token next = this.peek_token()
+            if (next != null) {
+                if (next.value == "|") {
+                    break
+                }
+            }
+            this.advance()  // consume |
+            commands.append(this.parse_command())
+        }
+
+        return new Pipeline(commands)
+    }
+
+    ASTNode parse_command() {
+        Token tok = this.current_token()
+        if (tok == null) {
+            return null
+        }
+
+        // Check for subshell or grouped commands
+        if (this.check("SYMBOL", "(")) {
+            this.advance()
+            ASTNode inner = this.parse_and_or()
+            this.expect("SYMBOL", ")")
+            return inner
+        }
+
+        // Parse simple command
+        return this.parse_simple_command()
+    }
+
+    Command parse_simple_command() {
+        string cmd_name = ""
+        array args = []
+        array redirects = []
+
+        // First token is command name
+        Token tok = this.current_token()
+        if (tok == null) {
+            return null
+        }
+
+        // Get command name
+        if (tok.type == "NAME" || tok.type == "KEYWORD") {
+            set cmd_name = tok.value
+            this.advance()
+        }
+        elif (tok.type == "STRING") {
+            set cmd_name = tok.value
+            this.advance()
+        }
+        elif (tok.type == "HOME") {
+            set cmd_name = "~" + tok.value
+            this.advance()
+        }
+        else {
+            return null
+        }
+
+        // Parse arguments and redirections
+        while (this.is_at_end() == false) {
+            Token arg_tok = this.current_token()
+            if (arg_tok == null) {
+                break
+            }
+
+            // Check for end of command
+            if (arg_tok.type == "SYMBOL") {
+                array cmd_enders = ["|", ";", "&&", "||", ")", ">", ">>", "<", "<<"]
+                if (arg_tok.value in cmd_enders) {
+                    // Handle redirections
+                    if (arg_tok.value == ">" || arg_tok.value == ">>" || arg_tok.value == "<" || arg_tok.value == "<<") {
+                        string redir_op = arg_tok.value
+                        this.advance()
+                        Token target_tok = this.current_token()
+                        string target = ""
+                        if (target_tok != null) {
+                            if (target_tok.type == "NAME" || target_tok.type == "STRING") {
+                                set target = target_tok.value
+                                this.advance()
+                            }
+                        }
+                        redirects.append(new Redirect(redir_op, target))
+                    }
+                    else {
+                        break
+                    }
+                }
+                else {
+                    break
+                }
+            }
+            elif (arg_tok.type == "NAME" || arg_tok.type == "KEYWORD") {
+                args.append(new StringLiteral(arg_tok.value))
+                this.advance()
+            }
+            elif (arg_tok.type == "STRING") {
+                args.append(new StringLiteral(arg_tok.value))
+                this.advance()
+            }
+            elif (arg_tok.type == "INTEGER_LITERAL") {
+                args.append(new NumberLiteral(arg_tok.value, false))
+                this.advance()
+            }
+            elif (arg_tok.type == "FLOAT_LITERAL") {
+                args.append(new NumberLiteral(arg_tok.value, true))
+                this.advance()
+            }
+            elif (arg_tok.type == "VARIABLE") {
+                args.append(new Variable(arg_tok.value))
+                this.advance()
+            }
+            elif (arg_tok.type == "HOME") {
+                args.append(new HomePath(arg_tok.value))
+                this.advance()
+            }
+            else {
+                break
+            }
+        }
+
+        return new Command(cmd_name, args, redirects)
+    }
+
+    Assignment parse_assignment() {
+        this.expect("KEYWORD", "set")
+        Token name_tok = this.expect("NAME")
+        this.expect("SYMBOL", "=")
+        ASTNode value = this.parse_expression()
+        return new Assignment(name_tok.value, value)
+    }
+
+    IfStatement parse_if() {
+        this.expect("KEYWORD", "if")
+        ASTNode condition = this.parse_expression()
+        this.expect("SYMBOL", "{")
+        array body = this.parse_block_body()
+        this.expect("SYMBOL", "}")
+
+        array elif_branches = []
+        while (this.check("KEYWORD", "elif")) {
+            this.advance()
+            ASTNode elif_cond = this.parse_expression()
+            this.expect("SYMBOL", "{")
+            array elif_body = this.parse_block_body()
+            this.expect("SYMBOL", "}")
+            elif_branches.append(new ElifBranch(elif_cond, elif_body))
+        }
+
+        array else_body = []
+        if (this.check("KEYWORD", "else")) {
+            this.advance()
+            this.expect("SYMBOL", "{")
+            set else_body = this.parse_block_body()
+            this.expect("SYMBOL", "}")
+        }
+
+        return new IfStatement(condition, body, elif_branches, else_body)
+    }
+
+    WhileStatement parse_while() {
+        this.expect("KEYWORD", "while")
+        ASTNode condition = this.parse_expression()
+        this.expect("SYMBOL", "{")
+        array body = this.parse_block_body()
+        this.expect("SYMBOL", "}")
+        return new WhileStatement(condition, body)
+    }
+
+    ForStatement parse_for() {
+        this.expect("KEYWORD", "for")
+        Token var_tok = this.expect("NAME")
+        this.expect("KEYWORD", "in")  // 'in' might need to be added as keyword
+        ASTNode iterable = this.parse_expression()
+        this.expect("SYMBOL", "{")
+        array body = this.parse_block_body()
+        this.expect("SYMBOL", "}")
+        return new ForStatement(var_tok.value, iterable, body)
+    }
+
+    array parse_block_body() {
+        array statements = []
+        this.skip_semicolons()
+        while (this.is_at_end() == false) {
+            if (this.check("SYMBOL", "}")) {
+                break
+            }
+            ASTNode stmt = this.parse_statement()
+            if (stmt != null) {
+                statements.append(stmt)
+            }
+            this.skip_semicolons()
+        }
+        return statements
+    }
+
+    // Expression parsing (for conditions and values)
+    ASTNode parse_expression() {
+        return this.parse_or_expr()
+    }
+
+    ASTNode parse_or_expr() {
+        ASTNode left = this.parse_and_expr()
+        while (this.check("SYMBOL", "||")) {
+            this.advance()
+            ASTNode right = this.parse_and_expr()
+            set left = new BinaryExpr(left, "||", right)
+        }
+        return left
+    }
+
+    ASTNode parse_and_expr() {
+        ASTNode left = this.parse_equality()
+        while (this.check("SYMBOL", "&&")) {
+            this.advance()
+            ASTNode right = this.parse_equality()
+            set left = new BinaryExpr(left, "&&", right)
+        }
+        return left
+    }
+
+    ASTNode parse_equality() {
+        ASTNode left = this.parse_comparison()
+        while (this.check("SYMBOL", "==") || this.check("SYMBOL", "!=")) {
+            Token op_tok = this.current_token()
+            this.advance()
+            ASTNode right = this.parse_comparison()
+            set left = new BinaryExpr(left, op_tok.value, right)
+        }
+        return left
+    }
+
+    ASTNode parse_comparison() {
+        ASTNode left = this.parse_additive()
+        array comp_ops = [">", "<", ">=", "<="]
+        while (this.current_token() != null) {
+            Token tok = this.current_token()
+            if (tok.type != "SYMBOL") {
+                break
+            }
+            if ((tok.value in comp_ops) == false) {
+                break
+            }
+            this.advance()
+            ASTNode right = this.parse_additive()
+            set left = new BinaryExpr(left, tok.value, right)
+        }
+        return left
+    }
+
+    ASTNode parse_additive() {
+        ASTNode left = this.parse_multiplicative()
+        while (this.check("SYMBOL", "+") || this.check("SYMBOL", "-")) {
+            Token op_tok = this.current_token()
+            this.advance()
+            ASTNode right = this.parse_multiplicative()
+            set left = new BinaryExpr(left, op_tok.value, right)
+        }
+        return left
+    }
+
+    ASTNode parse_multiplicative() {
+        ASTNode left = this.parse_unary()
+        while (this.check("SYMBOL", "*") || this.check("SYMBOL", "/")) {
+            Token op_tok = this.current_token()
+            this.advance()
+            ASTNode right = this.parse_unary()
+            set left = new BinaryExpr(left, op_tok.value, right)
+        }
+        return left
+    }
+
+    ASTNode parse_unary() {
+        if (this.check("SYMBOL", "!")) {
+            this.advance()
+            ASTNode operand = this.parse_unary()
+            return new UnaryExpr("!", operand)
+        }
+        if (this.check("SYMBOL", "-")) {
+            this.advance()
+            ASTNode operand = this.parse_unary()
+            return new UnaryExpr("-", operand)
+        }
+        return this.parse_primary()
+    }
+
+    ASTNode parse_primary() {
+        Token tok = this.current_token()
+        if (tok == null) {
+            throw new ShellError("Unexpected end of input in expression", "ERROR")
+        }
+
+        if (tok.type == "INTEGER_LITERAL") {
+            this.advance()
+            return new NumberLiteral(tok.value, false)
+        }
+        if (tok.type == "FLOAT_LITERAL") {
+            this.advance()
+            return new NumberLiteral(tok.value, true)
+        }
+        if (tok.type == "STRING") {
+            this.advance()
+            return new StringLiteral(tok.value)
+        }
+        if (tok.type == "VARIABLE") {
+            this.advance()
+            return new Variable(tok.value)
+        }
+        if (tok.type == "HOME") {
+            this.advance()
+            return new HomePath(tok.value)
+        }
+        if (tok.type == "NAME") {
+            this.advance()
+            return new StringLiteral(tok.value)
+        }
+        if (tok.type == "KEYWORD") {
+            if (tok.value == "true") {
+                this.advance()
+                return new BoolLiteral(true)
+            }
+            if (tok.value == "false") {
+                this.advance()
+                return new BoolLiteral(false)
+            }
+        }
+
+        // Parenthesized expression
+        if (this.check("SYMBOL", "(")) {
+            this.advance()
+            ASTNode expr = this.parse_expression()
+            this.expect("SYMBOL", ")")
+            return expr
+        }
+
+        throw new ShellError("Unexpected token '" + tok.value + "' in expression at line " + str(tok.line), "ERROR")
+    }
+}

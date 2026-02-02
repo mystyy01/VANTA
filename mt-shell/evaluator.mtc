@@ -1,0 +1,659 @@
+from mtclib.iter use range
+from mtclib.strings use equals, concat, length
+from tokenizer use Token, ShellError
+from parser use ASTNode, Command, Pipeline, AndOr, Redirect, Assignment
+from parser use Variable, HomePath, StringLiteral, NumberLiteral, BoolLiteral
+from parser use BinaryExpr, UnaryExpr, IfStatement, WhileStatement, ForStatement
+from parser use BreakStatement, Block, ElifBranch
+
+// External declarations for kernel/OS interaction
+external void print(string s)
+external void print_char(int c)
+external string read_line()
+external string read_file(string path)
+external int write_file(string path, string content)
+external int file_exists(string path)
+external array list_dir(string path)
+external string get_cwd()
+external int set_cwd(string path)
+external int exec_program(string path, array args)
+external string malloc(int size)
+// Shell environment
+class Environment {
+    arg array var_names = []
+    arg array var_values = []
+    string home_path = "/users/root"
+    string apps_path = "/apps"
+    int last_exit_code = 0
+
+    void set_var(string name, string value) {
+        // Check if exists
+        int i = 0
+        while (i < this.var_names.length()) {
+            if (equals(this.var_names[i], name)) {
+                set this.var_values[i] = value
+                return
+            }
+            set i = i + 1
+        }
+        // Add new
+        this.var_names.append(name)
+        this.var_values.append(value)
+    }
+
+    string get_var(string name) {
+        // Special variables
+        if (equals(name, "?")) {
+            return str(this.last_exit_code)
+        }
+        if (equals(name, "HOME")) {
+            return this.home_path
+        }
+        if (equals(name, "PWD")) {
+            return get_cwd()
+        }
+
+        int i = 0
+        while (i < this.var_names.length()) {
+            if (equals(this.var_names[i], name)) {
+                return this.var_values[i]
+            }
+            set i = i + 1
+        }
+        return ""
+    }
+
+    string expand_home(string user) {
+        if (length(user) == 0) {
+            return this.home_path
+        }
+        return "/users/" + user
+    }
+}
+
+// Builtin command result
+class BuiltinResult {
+    arg bool handled = false
+    arg int exit_code = 0
+    arg string output = ""
+}
+
+// Evaluator class
+class Evaluator {
+    arg Environment env = null
+    bool break_flag = false
+
+    void init() {
+        set this.env = new Environment()
+    }
+
+    // Main entry point
+    int eval(ASTNode node) {
+        if (node == null) {
+            return 0
+        }
+
+        string node_type = typeof(node)
+
+        if (node_type == "Block") {
+            return this.eval_block(node)
+        }
+        if (node_type == "Command") {
+            return this.eval_command(node)
+        }
+        if (node_type == "Pipeline") {
+            return this.eval_pipeline(node)
+        }
+        if (node_type == "AndOr") {
+            return this.eval_and_or(node)
+        }
+        if (node_type == "Assignment") {
+            return this.eval_assignment(node)
+        }
+        if (node_type == "IfStatement") {
+            return this.eval_if(node)
+        }
+        if (node_type == "WhileStatement") {
+            return this.eval_while(node)
+        }
+        if (node_type == "ForStatement") {
+            return this.eval_for(node)
+        }
+        if (node_type == "BreakStatement") {
+            set this.break_flag = true
+            return 0
+        }
+
+        return 0
+    }
+
+    int eval_block(Block block) {
+        int last_code = 0
+        int i = 0
+        while (i < block.statements.length()) {
+            if (this.break_flag) {
+                break
+            }
+            set last_code = this.eval(block.statements[i])
+            set i = i + 1
+        }
+        return last_code
+    }
+
+    int eval_command(Command cmd) {
+        if (length(cmd.name) == 0) {
+            return 0
+        }
+
+        // Expand command name if needed
+        string cmd_name = this.expand_value(cmd.name)
+
+        // Build args list
+        array expanded_args = []
+        int i = 0
+        while (i < cmd.args.length()) {
+            string arg_val = this.eval_to_string(cmd.args[i])
+            expanded_args.append(arg_val)
+            set i = i + 1
+        }
+
+        // Try builtin first
+        BuiltinResult builtin = this.try_builtin(cmd_name, expanded_args)
+        if (builtin.handled) {
+            if (length(builtin.output) > 0) {
+                print(builtin.output)
+            }
+            set this.env.last_exit_code = builtin.exit_code
+            return builtin.exit_code
+        }
+
+        // Try external command
+        int exit_code = this.try_external(cmd_name, expanded_args)
+        set this.env.last_exit_code = exit_code
+        return exit_code
+    }
+
+    BuiltinResult try_builtin(string name, array args) {
+        // echo
+        if (equals(name, "echo")) {
+            string output = ""
+            int i = 0
+            while (i < args.length()) {
+                if (i > 0) {
+                    set output = output + " "
+                }
+                set output = output + args[i]
+                set i = i + 1
+            }
+            set output = output + "\n"
+            return new BuiltinResult(true, 0, output)
+        }
+
+        // cd
+        if (equals(name, "cd")) {
+            string path = this.env.home_path
+            if (args.length() > 0) {
+                set path = args[0]
+            }
+            // Expand ~ if present
+            if (length(path) > 0) {
+                if (path[0] == "~") {
+                    set path = this.env.expand_home("") + path[1:]
+                }
+            }
+            int result = set_cwd(path)
+            if (result == 0) {
+                return new BuiltinResult(true, 0, "")
+            }
+            return new BuiltinResult(true, 1, "cd: no such directory: " + path + "\n")
+        }
+
+        // pwd
+        if (equals(name, "pwd")) {
+            string cwd = get_cwd()
+            return new BuiltinResult(true, 0, cwd + "\n")
+        }
+
+        // export / set handled by Assignment node, but allow export syntax
+        if (equals(name, "export")) {
+            // export VAR=value
+            if (args.length() > 0) {
+                string arg = args[0]
+                // Find = sign
+                int eq_pos = -1
+                int j = 0
+                while (j < length(arg)) {
+                    if (arg[j] == "=") {
+                        set eq_pos = j
+                        break
+                    }
+                    set j = j + 1
+                }
+                if (eq_pos > 0) {
+                    string var_name = arg[0:eq_pos]
+                    string var_value = arg[eq_pos + 1:]
+                    this.env.set_var(var_name, var_value)
+                    return new BuiltinResult(true, 0, "")
+                }
+            }
+            return new BuiltinResult(true, 0, "")
+        }
+
+        // exit
+        if (equals(name, "exit")) {
+            int code = 0
+            if (args.length() > 0) {
+                set code = int(args[0])
+            }
+            // For now just return the code, caller should handle exit
+            return new BuiltinResult(true, code, "")
+        }
+
+        // ls
+        if (equals(name, "ls")) {
+            string path = get_cwd()
+            if (args.length() > 0) {
+                set path = args[0]
+            }
+            array entries = list_dir(path)
+            string output = ""
+            int k = 0
+            while (k < entries.length()) {
+                set output = output + entries[k] + "\n"
+                set k = k + 1
+            }
+            return new BuiltinResult(true, 0, output)
+        }
+
+        // cat
+        if (equals(name, "cat")) {
+            if (args.length() == 0) {
+                return new BuiltinResult(true, 1, "cat: missing file\n")
+            }
+            string content = read_file(args[0])
+            return new BuiltinResult(true, 0, content)
+        }
+
+        // clear
+        if (equals(name, "clear")) {
+            // Send escape sequence or clear screen
+            return new BuiltinResult(true, 0, "\x1b[2J\x1b[H")
+        }
+
+        // help
+        if (equals(name, "help")) {
+            string help_text = "mt-shell builtins:\n"
+            set help_text = help_text + "  echo [args...]  - print arguments\n"
+            set help_text = help_text + "  cd [path]       - change directory\n"
+            set help_text = help_text + "  pwd             - print working directory\n"
+            set help_text = help_text + "  ls [path]       - list directory\n"
+            set help_text = help_text + "  cat <file>      - print file contents\n"
+            set help_text = help_text + "  set VAR = val   - set variable\n"
+            set help_text = help_text + "  export VAR=val  - export variable\n"
+            set help_text = help_text + "  exit [code]     - exit shell\n"
+            set help_text = help_text + "  clear           - clear screen\n"
+            set help_text = help_text + "  help            - show this help\n"
+            return new BuiltinResult(true, 0, help_text)
+        }
+
+        // Not a builtin
+        return new BuiltinResult(false, 0, "")
+    }
+
+    int try_external(string name, array args) {
+        // Check /apps/name first
+        string app_path = this.env.apps_path + "/" + name
+        if (file_exists(app_path)) {
+            return exec_program(app_path, args)
+        }
+
+        // Check if absolute path
+        if (length(name) > 0) {
+            if (name[0] == "/") {
+                if (file_exists(name)) {
+                    return exec_program(name, args)
+                }
+            }
+        }
+
+        // Command not found
+        print("mt-shell: command not found: " + name + "\n")
+        return 127
+    }
+
+    int eval_pipeline(Pipeline pipeline) {
+        // For bare-metal, pipelines are complex - need IPC
+        // For now, just run commands sequentially (simplified)
+        int last_code = 0
+        int i = 0
+        while (i < pipeline.commands.length()) {
+            set last_code = this.eval(pipeline.commands[i])
+            set i = i + 1
+        }
+        return last_code
+    }
+
+    int eval_and_or(AndOr node) {
+        int left_code = this.eval(node.left)
+
+        if (equals(node.operator, "&&")) {
+            if (left_code == 0) {
+                return this.eval(node.right)
+            }
+            return left_code
+        }
+
+        if (equals(node.operator, "||")) {
+            if (left_code != 0) {
+                return this.eval(node.right)
+            }
+            return left_code
+        }
+
+        return left_code
+    }
+
+    int eval_assignment(Assignment node) {
+        string value = this.eval_to_string(node.value)
+        this.env.set_var(node.name, value)
+        return 0
+    }
+
+    int eval_if(IfStatement node) {
+        bool cond = this.eval_to_bool(node.condition)
+
+        if (cond) {
+            return this.eval_statements(node.body)
+        }
+
+        // Check elif branches
+        int i = 0
+        while (i < node.elif_branches.length()) {
+            ElifBranch branch = node.elif_branches[i]
+            bool elif_cond = this.eval_to_bool(branch.condition)
+            if (elif_cond) {
+                return this.eval_statements(branch.body)
+            }
+            set i = i + 1
+        }
+
+        // Else
+        if (node.else_body.length() > 0) {
+            return this.eval_statements(node.else_body)
+        }
+
+        return 0
+    }
+
+    int eval_while(WhileStatement node) {
+        int last_code = 0
+        while (this.eval_to_bool(node.condition)) {
+            set last_code = this.eval_statements(node.body)
+            if (this.break_flag) {
+                set this.break_flag = false
+                break
+            }
+        }
+        return last_code
+    }
+
+    int eval_for(ForStatement node) {
+        // Get iterable value
+        string iterable_str = this.eval_to_string(node.iterable)
+        // Split by spaces for simple iteration
+        array items = this.split_string(iterable_str, " ")
+
+        int last_code = 0
+        int i = 0
+        while (i < items.length()) {
+            this.env.set_var(node.var_name, items[i])
+            set last_code = this.eval_statements(node.body)
+            if (this.break_flag) {
+                set this.break_flag = false
+                break
+            }
+            set i = i + 1
+        }
+        return last_code
+    }
+
+    int eval_statements(array stmts) {
+        int last_code = 0
+        int i = 0
+        while (i < stmts.length()) {
+            if (this.break_flag) {
+                break
+            }
+            set last_code = this.eval(stmts[i])
+            set i = i + 1
+        }
+        return last_code
+    }
+
+    // Convert AST node to string value
+    string eval_to_string(ASTNode node) {
+        if (node == null) {
+            return ""
+        }
+
+        string node_type = typeof(node)
+
+        if (node_type == "StringLiteral") {
+            StringLiteral lit = node
+            return lit.value
+        }
+        if (node_type == "NumberLiteral") {
+            NumberLiteral lit = node
+            return lit.value
+        }
+        if (node_type == "BoolLiteral") {
+            BoolLiteral lit = node
+            if (lit.value) {
+                return "true"
+            }
+            return "false"
+        }
+        if (node_type == "Variable") {
+            Variable var = node
+            return this.env.get_var(var.name)
+        }
+        if (node_type == "HomePath") {
+            HomePath hp = node
+            return this.env.expand_home(hp.user)
+        }
+        if (node_type == "BinaryExpr") {
+            return str(this.eval_expr(node))
+        }
+        if (node_type == "UnaryExpr") {
+            return str(this.eval_expr(node))
+        }
+
+        return ""
+    }
+
+    // Convert AST node to bool
+    bool eval_to_bool(ASTNode node) {
+        if (node == null) {
+            return false
+        }
+
+        string node_type = typeof(node)
+
+        if (node_type == "BoolLiteral") {
+            BoolLiteral lit = node
+            return lit.value
+        }
+        if (node_type == "Variable") {
+            string val = this.eval_to_string(node)
+            if (length(val) == 0) {
+                return false
+            }
+            if (equals(val, "false")) {
+                return false
+            }
+            if (equals(val, "0")) {
+                return false
+            }
+            return true
+        }
+        if (node_type == "BinaryExpr" || node_type == "UnaryExpr") {
+            int result = this.eval_expr(node)
+            return result != 0
+        }
+        if (node_type == "StringLiteral") {
+            StringLiteral lit = node
+            return length(lit.value) > 0
+        }
+
+        return true
+    }
+
+    // Evaluate expression to int
+    int eval_expr(ASTNode node) {
+        if (node == null) {
+            return 0
+        }
+
+        string node_type = typeof(node)
+
+        if (node_type == "NumberLiteral") {
+            NumberLiteral lit = node
+            return int(lit.value)
+        }
+        if (node_type == "BoolLiteral") {
+            BoolLiteral lit = node
+            if (lit.value) {
+                return 1
+            }
+            return 0
+        }
+        if (node_type == "Variable") {
+            string val = this.eval_to_string(node)
+            if (length(val) == 0) {
+                return 0
+            }
+            return int(val)
+        }
+        if (node_type == "StringLiteral") {
+            StringLiteral lit = node
+            return length(lit.value)
+        }
+
+        if (node_type == "UnaryExpr") {
+            UnaryExpr expr = node
+            int operand = this.eval_expr(expr.operand)
+            if (equals(expr.operator, "!")) {
+                if (operand == 0) {
+                    return 1
+                }
+                return 0
+            }
+            if (equals(expr.operator, "-")) {
+                return 0 - operand
+            }
+        }
+
+        if (node_type == "BinaryExpr") {
+            BinaryExpr expr = node
+            int left = this.eval_expr(expr.left)
+            int right = this.eval_expr(expr.right)
+
+            if (equals(expr.operator, "+")) {
+                return left + right
+            }
+            if (equals(expr.operator, "-")) {
+                return left - right
+            }
+            if (equals(expr.operator, "*")) {
+                return left * right
+            }
+            if (equals(expr.operator, "/")) {
+                if (right == 0) {
+                    return 0
+                }
+                return left / right
+            }
+            if (equals(expr.operator, "==")) {
+                if (left == right) {
+                    return 1
+                }
+                return 0
+            }
+            if (equals(expr.operator, "!=")) {
+                if (left != right) {
+                    return 1
+                }
+                return 0
+            }
+            if (equals(expr.operator, ">")) {
+                if (left > right) {
+                    return 1
+                }
+                return 0
+            }
+            if (equals(expr.operator, "<")) {
+                if (left < right) {
+                    return 1
+                }
+                return 0
+            }
+            if (equals(expr.operator, ">=")) {
+                if (left >= right) {
+                    return 1
+                }
+                return 0
+            }
+            if (equals(expr.operator, "<=")) {
+                if (left <= right) {
+                    return 1
+                }
+                return 0
+            }
+            if (equals(expr.operator, "&&")) {
+                if (left != 0 && right != 0) {
+                    return 1
+                }
+                return 0
+            }
+            if (equals(expr.operator, "||")) {
+                if (left != 0 || right != 0) {
+                    return 1
+                }
+                return 0
+            }
+        }
+
+        return 0
+    }
+
+    string expand_value(string val) {
+        // Expand ~ at start
+        if (length(val) > 0) {
+            if (val[0] == "~") {
+                return this.env.expand_home("") + val[1:]
+            }
+        }
+        return val
+    }
+
+    array split_string(string s, string delim) {
+        array result = []
+        string current = ""
+        int i = 0
+        while (i < length(s)) {
+            if (equals(s[i], delim)) {
+                if (length(current) > 0) {
+                    result.append(current)
+                    set current = ""
+                }
+            } else {
+                set current = current + s[i]
+            }
+            set i = i + 1
+        }
+        if (length(current) > 0) {
+            result.append(current)
+        }
+        return result
+    }
+}
