@@ -301,7 +301,17 @@ class Evaluator {
     }
 
     int try_external(string name, array args) {
-        // Check /apps/name first
+        // Check if name is a path (contains / or starts with ./ or ../)
+        if (length(name) > 1 && (name[0] == '.' || name[0] == '/')) {
+            // Handle relative/absolute paths directly
+            if (file_exists(name)) {
+                return exec_program(name, args)
+            }
+            print("mt-shell: no such file or directory: " + name + "\n")
+            return 127
+        }
+        
+        // Check /apps/name first (default PATH behavior)
         string app_path = this.env.apps_path + "/" + name
         if (file_exists(app_path)) {
             return exec_program(app_path, args)

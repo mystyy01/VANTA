@@ -391,11 +391,94 @@ char* get_cwd(void) {
     return cwd;
 }
 
-int set_cwd(const char* path) {
-    // Handle relative paths
-    char full_path[VFS_MAX_PATH];
+// Helper function to normalize path components
+void normalize_path(char* path) {
+    char* components[VFS_MAX_PATH / 2];
+    int comp_count = 0;
+    char temp_path[VFS_MAX_PATH];
+    char* token;
+    
+    strcpy(temp_path, path);
+    
+    // Manual tokenization by '/'
+    char* ptr = temp_path;
+    if (*ptr == '/') ptr++; // Skip leading slash
+    
+    while (*ptr != '\0' && comp_count < VFS_MAX_PATH / 2) {
+        // Find end of current component
+        char* end = ptr;
+        while (*end != '\0' && *end != '/') end++;
+        
+        // Extract component
+        char comp_char = *end;
+        *end = '\0';
+        
+        if (strcmp(ptr, ".") == 0) {
+            // Skip . (current directory)
+        } else if (strcmp(ptr, "..") == 0) {
+            // Go up one directory
+            if (comp_count > 0) {
+                comp_count--;
+            }
+        } else if (strlen(ptr) > 0) {
+            // Add regular component
+            components[comp_count++] = ptr;
+        }
+        
+        // Restore character and move to next component
+        *end = comp_char;
+        ptr = (comp_char == '\0') ? end : end + 1;
+        if (*ptr == '/') ptr++; // Skip slash
+    }
+    
+    // Rebuild normalized path
+    path[0] = '/';
+    path[1] = '\0';
+    
+    for (int i = 0; i < comp_count; i++) {
+        if (strlen(path) > 1) {
+            strcat(path, "/");
+        }
+        strcat(path, components[i]);
+    }
+    
+    // Ensure root stays as "/"
+    if (strlen(path) == 0) {
+        strcpy(path, "/");
+    }
+}
 
-    if (path[0] == '/') {
+int set_cwd(const char* path) {
+    char full_path[VFS_MAX_PATH];
+    
+    // Handle special cases
+    if (strcmp(path, ".") == 0) {
+        return 0; // Stay in current directory
+    }
+    
+    if (strcmp(path, "..") == 0) {
+        // Go to parent directory
+        if (strcmp(cwd, "/") == 0) {
+            return 0; // Already at root
+        }
+        strcpy(full_path, cwd);
+        
+        // Find last slash and truncate manually
+        int len = strlen(full_path);
+        if (len > 1) {
+            int last_slash = len - 1;
+            while (last_slash > 0 && full_path[last_slash] != '/') {
+                last_slash--;
+            }
+            if (last_slash == 0) {
+                // Root directory
+                full_path[1] = '\0';
+            } else {
+                full_path[last_slash] = '\0';
+            }
+        }
+    } else if (path[0] == '/') {
+        // Absolute path
         strncpy(full_path, path, VFS_MAX_PATH - 1);
         full_path[VFS_MAX_PATH - 1] = '\0';
     } else {
@@ -409,6 +492,9 @@ int set_cwd(const char* path) {
         int remaining = VFS_MAX_PATH - strlen(full_path) - 1;
         strncat(full_path, path, remaining);
     }
+    
+    // Normalize path to handle . and .. components
+    normalize_path(full_path);
 
     // Verify path exists and is a directory
     struct vfs_node* node = vfs_resolve_path(full_path);
