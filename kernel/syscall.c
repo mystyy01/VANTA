@@ -4,40 +4,14 @@
 #include "elf_loader.h"
 
 // ============================================================================
-// Console I/O
+// Console I/O (reuse mt-shell VGA writer so cursor stays consistent)
 // ============================================================================
 
-static volatile unsigned short *video = (volatile unsigned short *)0xB8000;
-static int cursor_row = 10;
-static int cursor_col = 0;
-
-static void console_putchar(char c) {
-    if (c == '\n') {
-        cursor_row++;
-        cursor_col = 0;
-    } else if (c == '\r') {
-        cursor_col = 0;
-    } else if (c == '\b') {
-        if (cursor_col > 0) {
-            cursor_col--;
-            video[cursor_row * 80 + cursor_col] = (0x0F << 8) | ' ';
-        }
-    } else {
-        video[cursor_row * 80 + cursor_col] = (0x0F << 8) | c;
-        cursor_col++;
-        if (cursor_col >= 80) {
-            cursor_col = 0;
-            cursor_row++;
-        }
-    }
-    if (cursor_row >= 25) {
-        cursor_row = 10;
-    }
-}
+extern void print_char(int c); // defined in mt-shell/lib.c
 
 static int console_write(const char *buf, int count) {
     for (int i = 0; i < count && buf[i]; i++) {
-        console_putchar(buf[i]);
+        print_char(buf[i]);
     }
     return count;
 }
@@ -411,18 +385,8 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
             const char *path = (const char *)arg1;
             char full_path[VFS_MAX_PATH];
             build_path(path, full_path);
-            if (fat32_touch_path(full_path) != 0) return -1;
-
-            struct vfs_node *node = vfs_resolve_path(full_path);
-            if (!node) return -1;
-
-            int fd = fd_alloc();
-            if (fd < 0) return -1;
-            fd_table[fd].node = node;
-            fd_table[fd].offset = 0;
-            fd_table[fd].flags = O_RDWR;
-            fd_table[fd].type = FD_FILE;
-            return fd;
+            int res = fat32_touch_path(full_path);
+            return (res == 0) ? 0 : -1;
         }
 
         case SYS_SEEK:

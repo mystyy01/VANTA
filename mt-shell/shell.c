@@ -254,8 +254,6 @@ int shell_main(void) {
             cmd_echo(args_buf);
         } else if (str_eq(cmd_buf, "clear")) {
             cmd_clear();
-        } else if (str_eq(cmd_buf, "mkdir")) {
-            cmd_mkdir(args_buf);
         } else {
             // Try to execute external program from /apps/<cmd>
             char path_buf[256];
@@ -278,11 +276,11 @@ int shell_main(void) {
             argv[2] = 0;
 
             int r = exec_program(path, argv);
-            if (r != 0) {
+            if (r == -1) {
                 mt_print("vanta-shell: command not found: ");
                 mt_print(cmd_buf);
                 mt_print("\n");
-            }
+            } else if (r != 0) {} // let the command return an error rather than the shell
         }
     }
     

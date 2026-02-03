@@ -157,7 +157,6 @@ static inline int close(int fd) {
 static inline int read(int fd, char *buf, int count) {
     return (int)syscall3(SYS_READ, fd, (long)buf, count);
 }
-
 static inline int write(int fd, const char *buf, int count) {
     return (int)syscall3(SYS_WRITE, fd, (long)buf, count);
 }
@@ -180,6 +179,10 @@ static inline int rmdir(const char *path) {
 
 static inline int unlink(const char *path) {
     return (int)syscall1(SYS_UNLINK, (long)path);
+}
+
+static inline int create(const char *path) {
+    return (int)syscall1(SYS_CREATE, (long)path);
 }
 
 static inline int readdir(int fd, struct dirent *buf, int index) {
