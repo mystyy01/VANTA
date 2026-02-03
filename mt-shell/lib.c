@@ -411,9 +411,64 @@ char* get_cwd(void) {
     return cwd;
 }
 
+static int normalize_path(const char *in, char *out, int out_size) {
+    const char *p = in;
+    int out_len = 0;
+    int stack[VFS_MAX_PATH / 2];
+    int depth = 0;
+
+    if (out_size < 2) return -1;
+    out[out_len++] = '/';
+
+    while (*p) {
+        char component[VFS_MAX_NAME];
+        int i = 0;
+
+        while (*p == '/') p++;
+        if (!*p) break;
+
+        while (*p && *p != '/') {
+            if (i < VFS_MAX_NAME - 1) {
+                component[i++] = *p;
+            }
+            p++;
+        }
+        component[i] = 0;
+
+        if (component[0] == 0 || (component[0] == '.' && component[1] == 0)) {
+            continue;
+        }
+        if (component[0] == '.' && component[1] == '.' && component[2] == 0) {
+            if (depth > 0) {
+                out_len = stack[--depth];
+            } else {
+                out_len = 1;
+            }
+            continue;
+        }
+
+        stack[depth++] = out_len;
+        if (out_len > 1) {
+            if (out_len >= out_size - 1) return -1;
+            out[out_len++] = '/';
+        }
+        if (out_len + i >= out_size) return -1;
+        memcpy(out + out_len, component, i);
+        out_len += i;
+    }
+
+    if (out_len == 0) {
+        out[0] = '/';
+        out_len = 1;
+    }
+    out[out_len] = '\0';
+    return 0;
+}
+
 int set_cwd(const char* path) {
     // Handle relative paths
     char full_path[VFS_MAX_PATH];
+    char normalized[VFS_MAX_PATH];
 
     if (path[0] == '/') {
         strncpy(full_path, path, VFS_MAX_PATH - 1);
@@ -430,8 +485,12 @@ int set_cwd(const char* path) {
         strncat(full_path, path, remaining);
     }
 
+    if (normalize_path(full_path, normalized, VFS_MAX_PATH) != 0) {
+        return -1;
+    }
+
     // Verify path exists and is a directory
-    struct vfs_node* node = vfs_resolve_path(full_path);
+    struct vfs_node* node = vfs_resolve_path(normalized);
     if (!node) {
         return -1;  // Path not found
     }
@@ -439,7 +498,7 @@ int set_cwd(const char* path) {
         return -2;  // Not a directory
     }
 
-    strncpy(cwd, full_path, VFS_MAX_PATH - 1);
+    strncpy(cwd, normalized, VFS_MAX_PATH - 1);
     cwd[VFS_MAX_PATH - 1] = '\0';
     return 0;
 }

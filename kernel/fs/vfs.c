@@ -64,6 +64,8 @@ struct vfs_node *vfs_resolve_path(const char *path) {
     }
 
     struct vfs_node *current = root_node;
+    struct vfs_node *stack[VFS_MAX_PATH / 2];
+    int depth = 0;
     char component[VFS_MAX_NAME];
     int i = 0;
 
@@ -86,6 +88,24 @@ struct vfs_node *vfs_resolve_path(const char *path) {
 
         // Find this component in current directory
         if (component[0]) {
+            if (strcmp(component, ".") == 0) {
+                continue;
+            }
+            if (strcmp(component, "..") == 0) {
+                if (depth > 0) {
+                    current = stack[--depth];
+                } else {
+                    current = root_node;
+                }
+                continue;
+            }
+
+            if (depth < (VFS_MAX_PATH / 2)) {
+                stack[depth++] = current;
+            } else {
+                return 0;
+            }
+
             current = vfs_finddir(current, component);
             if (!current) return 0;
         }
