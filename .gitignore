@@ -1,2 +1,8 @@
 # Claude Code
 CLAUDE.md
+
+*.o
+**/**.o
+*.bin
+*.elf
+*
