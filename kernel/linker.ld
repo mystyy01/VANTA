@@ -7,17 +7,28 @@ SECTIONS
 
     .text : {
         *(.text)
+        *(.ltext)
     }
 
     .rodata : {
         *(.rodata)
+        *(.rodata.*)
+        *(.lrodata)
     }
 
     .data : {
         *(.data)
+        *(.ldata)
     }
 
     .bss : {
         *(.bss)
+        *(.lbss)
+        *(COMMON)
+    }
+
+    /DISCARD/ : {
+        *(.eh_frame)
+        *(.note.GNU-stack)
     }
 }

@@ -1,12 +1,12 @@
 // VANTA Kernel
 
 #include "idt.h"
-#include "syscall.h"
-#include "paging.h"
 #include "drivers/ata.h"
 #include "drivers/keyboard.h"
 #include "fs/fat32.h"
 #include "fs/vfs.h"
+#include "paging.h"
+#include "syscall.h"
 
 // Video memory starts at 0xB8000
 // Each character: 2 bytes (char + color)
@@ -31,16 +31,15 @@ void print_color(const char *str, int row, unsigned char color) {
 void kernel_main(void) {
     print("VANTA OS - 64-bit C Kernel", 0);
 
+    // Initialize paging with user-accessible pages
+    paging_init();
+
     // Initialize keyboard and interrupts
     keyboard_init();
     idt_init();
 
-    // Set up user-accessible page tables
-    paging_init();
-
     // Initialize syscall mechanism
     syscall_init();
-    print_color("Syscalls enabled", 2, 0x0A);
 
     // Initialize ATA and mount filesystem
     ata_init();
@@ -49,6 +48,7 @@ void kernel_main(void) {
     if (fat32_init(0) == 0) {
         print_color("FAT32 mounted", 1, 0x0A);
         vfs_set_root(fat32_get_root());
+        // Create standard directories
         ensure_path_exists("/apps");
         ensure_path_exists("/core");
         ensure_path_exists("/users/root");

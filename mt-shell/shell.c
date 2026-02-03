@@ -1,0 +1,265 @@
+// VANTA Shell - Pure C implementation
+// Replaces mt-lang shell due to memory issues
+
+#include "../kernel/drivers/keyboard.h"
+#include "../kernel/fs/vfs.h"
+
+// ============================================================================
+// External functions from lib.c
+// ============================================================================
+
+extern void mt_print(const char* s);
+extern void print_char(int c);
+extern void print_int(int n);
+extern char* read_line(void);
+extern char* get_cwd(void);
+extern int set_cwd(const char* path);
+extern char* list_dir(const char* path);
+extern char* read_file(const char* path);
+
+// ============================================================================
+// String utilities
+// ============================================================================
+
+static int str_len(const char* s) {
+    if (!s) return 0;
+    int len = 0;
+    while (s[len]) len++;
+    return len;
+}
+
+static int str_eq(const char* a, const char* b) {
+    if (!a || !b) return 0;
+    while (*a && *b) {
+        if (*a != *b) return 0;
+        a++;
+        b++;
+    }
+    return *a == *b;
+}
+
+static int str_starts_with(const char* str, const char* prefix) {
+    if (!str || !prefix) return 0;
+    while (*prefix) {
+        if (*str != *prefix) return 0;
+        str++;
+        prefix++;
+    }
+    return 1;
+}
+
+// ============================================================================
+// Command parsing
+// ============================================================================
+
+static char cmd_buf[64];
+static char args_buf[256];
+
+static void parse_input(const char* input) {
+    int i = 0;
+    int cmd_i = 0;
+    int args_i = 0;
+    
+    // Skip leading whitespace
+    while (input[i] == ' ' || input[i] == '\t') i++;
+    
+    // Get command (first word)
+    while (input[i] && input[i] != ' ' && input[i] != '\t' && cmd_i < 63) {
+        cmd_buf[cmd_i++] = input[i++];
+    }
+    cmd_buf[cmd_i] = '\0';
+    
+    // Skip whitespace between command and args
+    while (input[i] == ' ' || input[i] == '\t') i++;
+    
+    // Get rest as arguments
+    while (input[i] && args_i < 255) {
+        args_buf[args_i++] = input[i++];
+    }
+    args_buf[args_i] = '\0';
+}
+
+// ============================================================================
+// Built-in commands
+// ============================================================================
+
+static int cmd_help(void) {
+    mt_print("vanta-shell builtins:\n");
+    mt_print("  help        - show this help\n");
+    mt_print("  ls [path]   - list directory\n");
+    mt_print("  cd <path>   - change directory\n");
+    mt_print("  mkdir <dir> - create directory\n");
+    mt_print("  cat <file>  - print file contents\n");
+    mt_print("  pwd         - print working directory\n");
+    mt_print("  echo <...>  - print arguments\n");
+    mt_print("  clear       - clear screen\n");
+    mt_print("  exit        - exit shell\n");
+    return 0;
+}
+
+static int cmd_pwd(void) {
+    char* cwd = get_cwd();
+    mt_print(cwd);
+    mt_print("\n");
+    return 0;
+}
+
+static int cmd_ls(const char* path) {
+    const char* target = path;
+    if (!path || path[0] == '\0') {
+        target = get_cwd();
+    }
+    char* entries = list_dir(target);
+    if (entries && entries[0]) {
+        mt_print(entries);
+    }
+    return 0;
+}
+
+static int cmd_cd(const char* path) {
+    const char* target = path;
+    if (!path || path[0] == '\0') {
+        target = "/";
+    }
+    int result = set_cwd(target);
+    if (result != 0) {
+        mt_print("cd: no such directory: ");
+        mt_print(target);
+        mt_print("\n");
+    }
+    return result;
+}
+
+static int cmd_cat(const char* path) {
+    if (!path || path[0] == '\0') {
+        mt_print("cat: missing file argument\n");
+        return 1;
+    }
+    char* content = read_file(path);
+    if (content) {
+        mt_print(content);
+    }
+    return 0;
+}
+
+static int cmd_echo(const char* text) {
+    if (text) {
+        mt_print(text);
+    }
+    mt_print("\n");
+    return 0;
+}
+
+extern void clear_screen(void);
+extern void set_cursor(int row, int col);
+extern struct vfs_node *ensure_path_exists(const char *path);
+
+static int cmd_clear(void) {
+    clear_screen();
+    return 0;
+}
+
+static int cmd_mkdir(const char* path) {
+    if (!path || path[0] == '\0') {
+        mt_print("mkdir: missing directory argument\n");
+        return 1;
+    }
+    
+    // Build full path if relative
+    char full_path[256];
+    if (path[0] == '/') {
+        // Absolute path
+        int i = 0;
+        while (path[i] && i < 255) {
+            full_path[i] = path[i];
+            i++;
+        }
+        full_path[i] = '\0';
+    } else {
+        // Relative path - prepend cwd
+        char* cwd = get_cwd();
+        int i = 0;
+        while (cwd[i] && i < 200) {
+            full_path[i] = cwd[i];
+            i++;
+        }
+        // Add separator if needed
+        if (i > 0 && full_path[i-1] != '/') {
+            full_path[i++] = '/';
+        }
+        int j = 0;
+        while (path[j] && i < 255) {
+            full_path[i++] = path[j++];
+        }
+        full_path[i] = '\0';
+    }
+    
+    struct vfs_node *result = ensure_path_exists(full_path);
+    if (!result) {
+        mt_print("mkdir: failed to create directory: ");
+        mt_print(path);
+        mt_print("\n");
+        return 1;
+    }
+    return 0;
+}
+
+// ============================================================================
+// Main shell
+// ============================================================================
+
+int shell_main(void) {
+    mt_print("vanta-shell v0.2 - VANTA OS\n");
+    mt_print("Type 'help' for available commands\n\n");
+    
+    while (1) {
+        // Print prompt
+        char* cwd = get_cwd();
+        mt_print(cwd);
+        mt_print(" $ ");
+        
+        // Read input
+        char* input = read_line();
+        
+        // Skip empty input
+        if (!input || input[0] == '\0') {
+            continue;
+        }
+        
+        // Parse into command and arguments
+        parse_input(input);
+        
+        // Empty command (just whitespace)
+        if (cmd_buf[0] == '\0') {
+            continue;
+        }
+        
+        // Handle built-in commands
+        if (str_eq(cmd_buf, "exit")) {
+            break;
+        } else if (str_eq(cmd_buf, "help")) {
+            cmd_help();
+        } else if (str_eq(cmd_buf, "pwd")) {
+            cmd_pwd();
+        } else if (str_eq(cmd_buf, "ls")) {
+            cmd_ls(args_buf);
+        } else if (str_eq(cmd_buf, "cd")) {
+            cmd_cd(args_buf);
+        } else if (str_eq(cmd_buf, "cat")) {
+            cmd_cat(args_buf);
+        } else if (str_eq(cmd_buf, "echo")) {
+            cmd_echo(args_buf);
+        } else if (str_eq(cmd_buf, "clear")) {
+            cmd_clear();
+        } else if (str_eq(cmd_buf, "mkdir")) {
+            cmd_mkdir(args_buf);
+        } else {
+            mt_print("vanta-shell: command not found: ");
+            mt_print(cmd_buf);
+            mt_print("\n");
+        }
+    }
+    
+    mt_print("Goodbye!\n");
+    return 0;
+}

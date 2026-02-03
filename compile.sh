@@ -7,7 +7,7 @@ echo "=== Building VANTA OS with mt-shell ==="
 echo "[1/8] Assembling bootloader..."
 nasm -f bin bootloader/boot.asm -o boot.bin
 
-# Assemble kernel entry and ISRs
+# Assemble kernel entry, ISRs, and syscall entry
 echo "[2/8] Assembling kernel entry..."
 nasm -f elf64 kernel/entry.asm -o entry.o
 nasm -f elf64 kernel/isr.asm -o isr_asm.o
@@ -23,27 +23,22 @@ x86_64-elf-gcc $CFLAGS -c kernel/drivers/ata.c -o ata.o
 x86_64-elf-gcc $CFLAGS -c kernel/drivers/keyboard.c -o keyboard.o
 x86_64-elf-gcc $CFLAGS -c kernel/fs/vfs.c -o vfs.o
 x86_64-elf-gcc $CFLAGS -c kernel/fs/fat32.c -o fat32.o
-x86_64-elf-gcc $CFLAGS -c kernel/elf_loader.c -o elf_loader.o
-x86_64-elf-gcc $CFLAGS -c kernel/syscall.c -o syscall.o
 x86_64-elf-gcc $CFLAGS -c kernel/paging.c -o paging.o
+x86_64-elf-gcc $CFLAGS -c kernel/syscall.c -o syscall.o
+x86_64-elf-gcc $CFLAGS -c kernel/elf_loader.c -o elf_loader.o
 
-# Compile mt-shell lib.c (C runtime for shell)
+# Compile mt-shell (pure C now)
 echo "[4/8] Compiling mt-shell runtime..."
 x86_64-elf-gcc $CFLAGS -I kernel -c mt-shell/lib.c -o mt-shell/lib.o
 
-# Compile mt-shell with mt-lang compiler
 echo "[5/8] Compiling mt-shell..."
-cd mt-shell
-mtc shell.mtc --no-runtime --obj lib.o --no-libc -o shell.o
-cd ..
+x86_64-elf-gcc $CFLAGS -I kernel -c mt-shell/shell.c -o mt-shell/shell.o
 
 # Link kernel with mt-shell
 echo "[6/8] Linking kernel..."
 x86_64-elf-ld -T kernel/linker.ld -o kernel.bin \
-    entry.o isr_asm.o syscall_entry.o \
-    kernel.o idt.o isr.o syscall.o paging.o \
-    ata.o keyboard.o vfs.o fat32.o elf_loader.o \
-    mt-shell/lib.o mt-shell/shell.o
+    entry.o isr_asm.o syscall_entry.o kernel.o idt.o isr.o ata.o keyboard.o vfs.o fat32.o \
+    paging.o syscall.o elf_loader.o mt-shell/lib.o mt-shell/shell.o
 
 # Create boot disk image
 echo "[7/8] Creating boot image..."

@@ -7,8 +7,7 @@ external string get_cwd()
 external string list_dir(string path)
 external string read_file(string path)
 external int set_cwd(string path)
-external int exec_path(string path)
-external void print_int(int n)
+external void heap_reset()
 
 // Simple built-in command handler
 int run_builtin(string cmd, string args) {
@@ -70,18 +69,6 @@ int run_builtin(string cmd, string args) {
         return 0
     }
 
-    if (cmd == "exec") {
-        if (args.length() == 0) {
-            mt_print("exec: missing file argument\n")
-            return 1
-        }
-        int rc = exec_path(args)
-        mt_print("program exited with code ")
-        print_int(rc)
-        mt_print("\n")
-        return rc
-    }
-
     return -1  // Not a builtin
 }
 
@@ -92,6 +79,9 @@ int shell_main() {
 
     bool running = true
     while (running) {
+        // Reset heap at start of each command to prevent exhaustion
+        heap_reset()
+        
         // Print prompt
         string cwd = get_cwd()
         mt_print(cwd)
@@ -99,59 +89,19 @@ int shell_main() {
 
         // Read input
         string input = read_line()
-
-        // Skip empty lines
-        if (input.length() == 0) {
-            // Do nothing, loop again
-        } else {
-            // Check for exit
+        
+        // Debug: show what we got
+        mt_print("[got input]\n")
+        
+        // Try direct command match without parsing
+        int result = run_builtin(input, "")
+        if (result == -1) {
             if (input == "exit") {
                 set running = false
             } else {
-                // Parse simple command: first word is command, rest is args
-                string cmd = ""
-                string args = ""
-                int i = 0
-
-                // Get command (first word)
-                while (i < input.length()) {
-                    string c = input[i]
-                    if (c == " ") {
-                        break
-                    }
-                    set cmd = cmd + c
-                    set i = i + 1
-                }
-
-                // Skip spaces
-                while (i < input.length()) {
-                    if (input[i] != " ") {
-                        break
-                    }
-                    set i = i + 1
-                }
-
-                // Rest is argument
-                while (i < input.length()) {
-                    set args = args + input[i]
-                    set i = i + 1
-                }
-
-                // Try builtin
-                int result = run_builtin(cmd, args)
-                if (result == -1) {
-                    // Attempt to execute as program (relative to cwd)
-                    int rc = exec_path(cmd)
-                    if (rc == -1) {
-                        mt_print("mt-shell: command not found: ")
-                        mt_print(cmd)
-                        mt_print("\n")
-                    } else {
-                        mt_print("program exited with code ")
-                        print_int(rc)
-                        mt_print("\n")
-                    }
-                }
+                mt_print("unknown: ")
+                mt_print(input)
+                mt_print("\n")
             }
         }
     }

@@ -98,6 +98,22 @@ gdt_data:
     db 11001111b                    ; flags: 4KB granularity, 32-bit (ignored in long mode for data)
     db 0x00
 
+gdt_user_data:                      ; offset 0x18, selector 0x1B with RPL 3
+    dw 0xFFFF
+    dw 0x0000
+    db 0x00
+    db 11110010b                    ; access: present, ring 3, writable
+    db 11001111b                    ; flags: 4KB granularity
+    db 0x00
+
+gdt_user_code:                      ; offset 0x20, selector 0x23 with RPL 3
+    dw 0xFFFF
+    dw 0x0000
+    db 0x00
+    db 11111010b                    ; access: present, ring 3, executable, readable
+    db 10101111b                    ; flags: 4KB granularity, LONG MODE
+    db 0x00
+
 gdt_end:
 
 gdt_descriptor:
