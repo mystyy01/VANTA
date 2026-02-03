@@ -69,8 +69,8 @@ static void pic_remap(void) {
     __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0x01), "Nd"((uint16_t)0x21));
     __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0x01), "Nd"((uint16_t)0xA1));
 
-    // Mask all interrupts except IRQ1 (keyboard)
-    __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0xFD), "Nd"((uint16_t)0x21));
+    // Mask all interrupts except IRQ0 (timer) and IRQ1 (keyboard)
+    __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0xFC), "Nd"((uint16_t)0x21));
     __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0xFF), "Nd"((uint16_t)0xA1));
 }
 

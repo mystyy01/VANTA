@@ -74,7 +74,7 @@ int run_builtin(string cmd, string args) {
 
 // Main shell loop - called from kernel
 int shell_main() {
-    mt_print("mt-shell v0.1 - VANTA OS\n")
+    mt_print("mt-shell v0.1 - PHOBOS\n")
     mt_print("Type 'help' for available commands\n\n")
 
     bool running = true

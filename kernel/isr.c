@@ -1,6 +1,9 @@
 #include "isr.h"
 #include "drivers/keyboard.h"
 
+// System tick counter (incremented by timer IRQ ~18.2 times/sec by default PIT)
+volatile uint64_t system_ticks = 0;
+
 // Video memory for debug output
 static volatile unsigned short *video = (volatile unsigned short *)0xB8000;
 
@@ -66,7 +69,10 @@ void isr_handler(uint64_t int_no) {
 }
 
 void irq_handler(uint64_t int_no) {
-    if (int_no == 33) {
+    if (int_no == 32) {
+        // Timer interrupt - increment system tick counter
+        system_ticks++;
+    } else if (int_no == 33) {
         // Keyboard interrupt - read scancode and pass to keyboard driver
         uint8_t scancode;
         __asm__ volatile ("inb %1, %0" : "=a"(scancode) : "Nd"((uint16_t)0x60));

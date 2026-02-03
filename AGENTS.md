@@ -1,4 +1,4 @@
-# VANTA OS Development Guidelines
+# PHOBOS Development Guidelines
 
 ## Project Architecture
 - **Real-mode bootloader**: `bootloader/boot.asm` (512 bytes, loads kernel at 0x7E00)
@@ -45,7 +45,7 @@ x86_64-elf-gcc $CFLAGS -c kernel/fs/fat32.c -o fat32.o
 x86_64-elf-ld -T kernel/linker.ld -o kernel.bin entry.o isr_asm.o kernel.o idt.o isr.o ata.o keyboard.o vfs.o fat32.o
 
 # Create boot disk
-cat boot.bin kernel.bin > vanta.img
+cat boot.bin kernel.bin > phobos.img
 ```
 
 ### Testing & Validation
@@ -104,7 +104,7 @@ cat boot.bin kernel.bin > vanta.img
 4. **Clean up**: Remove artifacts with `rm -f *.o *.bin *.img` if needed
 
 ### Common Validation Points
-- **Kernel boot**: Should print "VANTA OS - 64-bit C Kernel" at top of screen
+- **Kernel boot**: Should print "PHOBOS - 64-bit C Kernel" at top of screen
 - **Keyboard**: Type input should work after shell starts
 - **ATA**: Should not hang on disk access
 - **FAT32**: Should show "FAT32 mounted" in green when successful

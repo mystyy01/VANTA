@@ -1,4 +1,4 @@
-// VANTA OS Userspace Syscall Library
+// PHOBOS Userspace Syscall Library
 // Include this in your apps to use syscalls
 
 #ifndef LIBSYS_H

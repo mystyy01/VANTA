@@ -1,8 +1,8 @@
-# VANTA OS
+# PHOBOS - Process Handler & Optimized Boot OS
 
-- kernel written from scratch
-- bootloader written from scratch
-- kernel modules written in mt-lang (my language)
-- runs on bare metal
-- x86/x64 architecture
-- ZERO bloat.
+- Kernel: 100% from scratch
+- Bootloader: 100% from scratch
+- Kernel modules: written in mt-lang
+- Runs on bare metal
+- x86/x64 support
+- ZERO bloat

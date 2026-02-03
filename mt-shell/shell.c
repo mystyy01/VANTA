@@ -1,6 +1,7 @@
-// VANTA Shell - Pure C implementation
+// PHOBOS Shell - Pure C implementation
 // Replaces mt-lang shell due to memory issues
 
+#include <stdint.h>
 #include "../kernel/drivers/keyboard.h"
 #include "../kernel/fs/vfs.h"
 
@@ -17,7 +18,20 @@ extern char* list_dir(const char* path);
 extern char* read_file(const char* path);
 extern void cursor_get(int *row, int *col);
 extern void set_cursor(int row, int col);
-#include "../kernel/drivers/keyboard.h"
+
+// VGA text-mode access for cursor rendering
+#define VGA_WIDTH 80
+#define VGA_BUFFER ((volatile uint16_t*)0xB8000)
+
+// Disable the hardware text-mode cursor (avoids double-blink with software caret)
+static inline void outb(uint16_t port, uint8_t val) {
+    __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static void disable_hw_cursor(void) {
+    outb(0x3D4, 0x0A);
+    outb(0x3D5, 0x20);  // bit 5 = disable
+}
 
 
 
@@ -88,7 +102,7 @@ static void parse_input(const char* input) {
 // ============================================================================
 
 static int cmd_help(void) {
-    mt_print("vanta-shell builtins:\n");
+    mt_print("phobos-shell builtins:\n");
     mt_print("  help        - show this help\n");
     mt_print("  ls [path]   - list directory\n");
     mt_print("  cd <path>   - change directory\n");
@@ -157,6 +171,7 @@ static int cmd_echo(const char* text) {
 extern void clear_screen(void);
 extern void set_cursor(int row, int col);
 extern struct vfs_node *ensure_path_exists(const char *path);
+extern volatile uint64_t system_ticks;
 
 static int cmd_clear(void) {
     clear_screen();
@@ -217,94 +232,130 @@ extern int exec_program(const char* path, char** args);
 
 static char input_buffer[512];
 
-// Simple line editor with cursor tracking and prompt-aware redraw.
-static char* shell_read_line(void) {
-    int start_row, start_col;
-    cursor_get(&start_row, &start_col); // position after prompt
+// Cursor blink interval in PIT ticks (~18.2 ticks/sec, so 4 ≈ 0.22 sec)
+#define CURSOR_BLINK_TICKS 4
 
-    int len = 0;
-    int pos = 0;
-    int rendered_len = 0;
-    int last_caret_pos = -1;
-    int last_caret_row = -1;
-    int last_caret_col = -1;
+// Simple line editor with cursor tracking, prompt-aware redraw, and blinking cursor.
+static char* shell_read_line(void) {
+    // Capture prompt end position
+    int prompt_row, prompt_col;
+    cursor_get(&prompt_row, &prompt_col);
+
+    int len = 0;          // line length
+    int pos = 0;          // cursor position within line
+    int rendered_len = 0; // previously drawn length
+    int cursor_visible = 1;
+    uint64_t last_blink_tick = system_ticks;
+
+    // Redraw line content (not cursor)
+    void redraw_line(void) {
+        set_cursor(prompt_row, prompt_col);
+        for (int i = 0; i < len; i++) {
+            print_char(input_buffer[i]);
+        }
+        for (int i = len; i < rendered_len; i++) {
+            print_char(' ');
+        }
+        rendered_len = len;
+    }
+
+    // Draw cursor at current position
+    void draw_cursor(int visible) {
+        int abs_pos = prompt_col + pos;
+        int row = prompt_row + (abs_pos / VGA_WIDTH);
+        int col = abs_pos % VGA_WIDTH;
+        volatile uint16_t *cell = VGA_BUFFER + (row * VGA_WIDTH) + col;
+        uint16_t color = *cell & 0xFF00;
+        char ch = (pos < len) ? input_buffer[pos] : ' ';
+
+        *cell = color | (uint8_t)(visible ? '_' : ch);
+        set_cursor(row, col);
+    }
+
+    // Initial draw
+    draw_cursor(cursor_visible);
 
     while (1) {
-        struct key_event ev = keyboard_get_event();
+        // Check for cursor blink
+        uint64_t now = system_ticks;
+        if (now - last_blink_tick >= CURSOR_BLINK_TICKS) {
+            cursor_visible = !cursor_visible;
+            draw_cursor(cursor_visible);
+            last_blink_tick = now;
+        }
+
+        // Poll for keyboard event (non-blocking)
+        struct key_event ev;
+        if (!keyboard_poll_event(&ev)) {
+            __asm__ volatile ("hlt");  // Wait for next interrupt
+            continue;
+        }
         if (!ev.pressed) continue;
 
+        // Ctrl+C cancels line
         if ((ev.modifiers & MOD_CTRL) && (ev.key == 'c' || ev.key == 'C')) {
+            draw_cursor(0);  // Hide cursor
             mt_print("^C\n");
             input_buffer[0] = '\0';
             return input_buffer;
         }
 
         if (ev.key == '\n') {
+            // Accept line: hide cursor, move to end, newline
+            draw_cursor(0);
+            int end_abs = prompt_col + len;
+            set_cursor(prompt_row + end_abs / VGA_WIDTH, end_abs % VGA_WIDTH);
             print_char('\n');
             input_buffer[len] = '\0';
             return input_buffer;
-        } else if (ev.key == '\b') {
+        }
+
+        if (ev.key == '\b') {
             if (pos > 0) {
+                draw_cursor(0);  // Hide before modifying
                 for (int i = pos - 1; i < len - 1; i++) {
                     input_buffer[i] = input_buffer[i + 1];
                 }
                 len--;
                 pos--;
+                redraw_line();
             }
         } else if (ev.key == KEY_LEFT) {
-            if (pos > 0) pos--;
+            if (pos > 0) {
+                draw_cursor(0);
+                pos--;
+            }
         } else if (ev.key == KEY_RIGHT) {
-            if (pos < len) pos++;
-        } else if (ev.key >= 0x20 && ev.key < 0x7F) {
+            if (pos < len) {
+                draw_cursor(0);
+                pos++;
+            }
+        } else if (ev.key >= 0x20 && ev.key < 0x7F) { // printable
             if (len < 510) {
+                draw_cursor(0);  // Hide before modifying
                 for (int i = len; i > pos; i--) {
                     input_buffer[i] = input_buffer[i - 1];
                 }
                 input_buffer[pos] = ev.key;
                 len++;
                 pos++;
+                redraw_line();
             }
+        } else {
+            continue;  // Unknown key, don't reset blink
         }
 
-        // Redraw line from prompt start
-        set_cursor(start_row, start_col);
-        for (int i = 0; i < len; i++) {
-            print_char(input_buffer[i]);
-        }
-        // Clear leftover chars from previous render
-        for (int i = len; i < rendered_len; i++) {
-            print_char(' ');
-        }
-        rendered_len = len;
-
-        // Erase previous caret by restoring the character/space underneath
-        if (last_caret_pos >= 0) {
-            int abs_last = start_col + last_caret_pos;
-            int lr = start_row + (abs_last / 80);
-            int lc = abs_last % 80;
-            set_cursor(lr, lc);
-            char ch = (last_caret_pos < len) ? input_buffer[last_caret_pos] : ' ';
-            print_char(ch);
-        }
-
-        // Draw a visible caret at current position (underscore)
-        int abs_pos = start_col + pos;
-        int row = start_row + (abs_pos / 80);
-        int col = abs_pos % 80;
-        set_cursor(row, col);
-        print_char('_');
-        set_cursor(row, col);
-
-        last_caret_pos = pos;
-        last_caret_row = row;
-        last_caret_col = col;
-        rendered_len = len > rendered_len ? len : rendered_len;
+        // Reset blink state on any input (cursor visible)
+        cursor_visible = 1;
+        last_blink_tick = system_ticks;
+        draw_cursor(cursor_visible);
     }
 }
 
 int shell_main(void) {
     cmd_clear();
-    mt_print("vanta-shell v0.2 - VANTA OS\n");
+    disable_hw_cursor();
+    mt_print("phobos-shell v0.2 - PHOBOS\n");
     mt_print("Type 'help' for available commands\n\n");
     
     while (1) {
@@ -369,7 +420,7 @@ int shell_main(void) {
 
             int r = exec_program(path, argv);
             if (r == -1) {
-                mt_print("vanta-shell: command not found: ");
+                mt_print("phobos-shell: command not found: ");
                 mt_print(cmd_buf);
                 mt_print("\n");
             } else if (r != 0) {} // let the command return an error rather than the shell

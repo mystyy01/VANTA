@@ -15,7 +15,7 @@ static const char scancode_lower[128] = {
     0, 27, '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\b',
     '\t', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\n',
     0, 'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`',
-    0, '\\', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0,
+    0, '#', 'z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/', 0,
     '*', 0, ' ', 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // F1-F10
     0, 0,  // Num lock, Scroll lock
@@ -27,10 +27,10 @@ static const char scancode_lower[128] = {
 };
 
 static const char scancode_upper[128] = {
-    0, 27, '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', '\b',
+    0, 27, '!', '"', 0x9C, '$', '%', '^', '&', '*', '(', ')', '_', '+', '\b',
     '\t', 'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', '\n',
-    0, 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~',
-    0, '|', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?', 0,
+    0, 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '@', '~',
+    0, '~', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', '<', '>', '?', 0,
     '*', 0, ' ', 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0,
@@ -139,6 +139,11 @@ void keyboard_handle_scancode(uint8_t scancode) {
             event.key = scancode_upper[code];
         } else {
             event.key = scancode_lower[code];
+        }
+
+        // ISO 102nd key (UK layout: \ and | next to left Shift)
+        if (code == 0x56) {
+            event.key = (mod_state & MOD_SHIFT) ? '|' : '\\';
         }
 
         // Handle special cases

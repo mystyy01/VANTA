@@ -1,4 +1,4 @@
-// VANTA Kernel
+// PHOBOS Kernel
 
 #include "idt.h"
 #include "drivers/ata.h"
@@ -29,7 +29,7 @@ void print_color(const char *str, int row, unsigned char color) {
 }
 
 void kernel_main(void) {
-    print("VANTA OS - 64-bit C Kernel", 0);
+    print("PHOBOS - 64-bit C Kernel", 0);
 
     // Initialize paging with user-accessible pages
     paging_init();

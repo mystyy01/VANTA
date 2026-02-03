@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "Building VANTA apps..."
+echo "Building PHOBOS apps..."
 
 CFLAGS="-ffreestanding -mno-red-zone -fno-pic -mcmodel=large -fno-builtin"
 

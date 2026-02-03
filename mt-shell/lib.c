@@ -1,4 +1,4 @@
-// Bare-metal C library for mt-shell on VANTA OS
+// Bare-metal C library for mt-shell on PHOBOS
 // Links against VANTA kernel
 
 #include "../kernel/drivers/keyboard.h"

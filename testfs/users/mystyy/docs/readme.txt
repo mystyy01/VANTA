@@ -1,2 +1,2 @@
-# Welcome to Vanta OS!
+# Welcome to phobos!
 # This is your personal documents directory.

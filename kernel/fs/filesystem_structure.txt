@@ -12,7 +12,7 @@
 │       ├── docs/
 │       └── downloads/
 ├── cfg/         # configs
-│   └── vanta.conf
+│   └── phobos.conf
 ├── temp/        # temp files / caches
 └── dev/         # virtual devices
     ├── console

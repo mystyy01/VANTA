@@ -10,7 +10,7 @@ for arg in "$@"; do
     fi
 done
 
-echo "=== Building VANTA OS with mt-shell ==="
+echo "=== Building PHOBOS with mt-shell ==="
 
 # Assemble bootloader
 echo "[1/10] Assembling bootloader..."
@@ -71,7 +71,7 @@ fi
 
 # Create boot disk image
 echo "[8/10] Creating boot image..."
-cat boot.bin kernel.bin > vanta.img
+cat boot.bin kernel.bin > phobos.img
 
 # Create FAT32 filesystem from testfs/
 echo "[9/10] Building testfs..."
@@ -86,7 +86,7 @@ echo "=== Build complete! Starting QEMU... ==="
 
 # Run with both disks
 qemu-system-x86_64 \
-    -drive file=vanta.img,format=raw,index=0 \
+    -drive file=phobos.img,format=raw,index=0 \
     -drive file=testfs.img,format=raw,index=1
 
 echo "Done"

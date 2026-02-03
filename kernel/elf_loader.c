@@ -2,7 +2,7 @@
 #include "syscall.h"
 #include "paging.h"
 
-// Minimal ELF64 loader for VANTA OS with user-mode execution.
+// Minimal ELF64 loader for PHOBOS with user-mode execution.
 // Assumptions:
 // - Flat physical addressing; we copy segments to their p_paddr.
 // - User programs run in ring 3 via iretq; syscalls return via SYS_EXIT.
