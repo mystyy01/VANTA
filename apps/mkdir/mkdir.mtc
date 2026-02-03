@@ -1,6 +1,0 @@
-// mkdir command for VANTA OS
-// Ultra minimal - no syscalls
-
-int main() {
-    return 0
-}

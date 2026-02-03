@@ -204,6 +204,9 @@ static int cmd_mkdir(const char* path) {
     return 0;
 }
 
+// External program execution
+extern int exec_program(const char* path, char** args);
+
 // ============================================================================
 // Main shell
 // ============================================================================
@@ -254,9 +257,32 @@ int shell_main(void) {
         } else if (str_eq(cmd_buf, "mkdir")) {
             cmd_mkdir(args_buf);
         } else {
-            mt_print("vanta-shell: command not found: ");
-            mt_print(cmd_buf);
-            mt_print("\n");
+            // Try to execute external program from /apps/<cmd>
+            char path_buf[256];
+            const char *path = cmd_buf;
+            if (cmd_buf[0] != '/') {
+                // default lookup in /apps
+                int i = 0;
+                const char *prefix = "/apps/";
+                while (prefix[i]) { path_buf[i] = prefix[i]; i++; }
+                int j = 0;
+                while (cmd_buf[j] && i < 255) { path_buf[i++] = cmd_buf[j++]; }
+                path_buf[i] = '\0';
+                path = path_buf;
+            }
+
+            // Build argv: prog, optional single arg string, NULL
+            char *argv[3];
+            argv[0] = (char *)cmd_buf;
+            argv[1] = (args_buf && args_buf[0] != '\0') ? (char *)args_buf : 0;
+            argv[2] = 0;
+
+            int r = exec_program(path, argv);
+            if (r != 0) {
+                mt_print("vanta-shell: command not found: ");
+                mt_print(cmd_buf);
+                mt_print("\n");
+            }
         }
     }
     

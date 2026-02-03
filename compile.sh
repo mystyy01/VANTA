@@ -1,20 +1,29 @@
 #!/bin/bash
 set -e
 
+SYNC_APPS=0
+
+# Check for flag
+for arg in "$@"; do
+    if [[ "$arg" == "--sync-apps" ]]; then
+        SYNC_APPS=1
+    fi
+done
+
 echo "=== Building VANTA OS with mt-shell ==="
 
 # Assemble bootloader
-echo "[1/8] Assembling bootloader..."
+echo "[1/10] Assembling bootloader..."
 nasm -f bin bootloader/boot.asm -o boot.bin
 
 # Assemble kernel entry, ISRs, and syscall entry
-echo "[2/8] Assembling kernel entry..."
+echo "[2/10] Assembling kernel entry..."
 nasm -f elf64 kernel/entry.asm -o entry.o
 nasm -f elf64 kernel/isr.asm -o isr_asm.o
 nasm -f elf64 kernel/syscall_entry.asm -o syscall_entry.o
 
 # Compile C kernel
-echo "[3/8] Compiling kernel..."
+echo "[3/10] Compiling kernel..."
 CFLAGS="-ffreestanding -mno-red-zone -fno-pic -mcmodel=large -I kernel -I kernel/drivers -I kernel/fs"
 x86_64-elf-gcc $CFLAGS -c kernel/kernel.c -o kernel.o
 x86_64-elf-gcc $CFLAGS -c kernel/idt.c -o idt.o
@@ -27,25 +36,45 @@ x86_64-elf-gcc $CFLAGS -c kernel/paging.c -o paging.o
 x86_64-elf-gcc $CFLAGS -c kernel/syscall.c -o syscall.o
 x86_64-elf-gcc $CFLAGS -c kernel/elf_loader.c -o elf_loader.o
 
-# Compile mt-shell (pure C now)
-echo "[4/8] Compiling mt-shell runtime..."
+# Compile mt-shell
+echo "[4/10] Compiling mt-shell runtime..."
 x86_64-elf-gcc $CFLAGS -I kernel -c mt-shell/lib.c -o mt-shell/lib.o
-
-echo "[5/8] Compiling mt-shell..."
 x86_64-elf-gcc $CFLAGS -I kernel -c mt-shell/shell.c -o mt-shell/shell.o
 
 # Link kernel with mt-shell
-echo "[6/8] Linking kernel..."
+echo "[5/10] Linking kernel..."
 x86_64-elf-ld -T kernel/linker.ld -o kernel.bin \
     entry.o isr_asm.o syscall_entry.o kernel.o idt.o isr.o ata.o keyboard.o vfs.o fat32.o \
     paging.o syscall.o elf_loader.o mt-shell/lib.o mt-shell/shell.o
 
+# Optional: build apps and copy to testfs
+if [[ $SYNC_APPS -eq 1 ]]; then
+    echo "[6/10] Building apps..."
+    ./apps/build_apps.sh
+
+    echo "[7/10] Copying app binaries into testfs/apps..."
+    mkdir -p testfs/apps
+
+    # Loop over each app folder
+    for appdir in apps/*/; do
+        appname="$(basename "$appdir")"
+        binary="$appdir/$appname"
+        if [[ -f "$binary" ]]; then
+            cp "$binary" testfs/apps/
+            echo "Copied $appname"
+        else
+            echo "No binary found for $appname, skipping"
+        fi
+    done
+fi
+
+
 # Create boot disk image
-echo "[7/8] Creating boot image..."
+echo "[8/10] Creating boot image..."
 cat boot.bin kernel.bin > vanta.img
 
 # Create FAT32 filesystem from testfs/
-echo "[8/8] Building testfs..."
+echo "[9/10] Building testfs..."
 dd if=/dev/zero of=testfs.img bs=1M count=32 2>/dev/null
 mkfs.fat -F 32 testfs.img >/dev/null 2>&1
 

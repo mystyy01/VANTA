@@ -325,13 +325,19 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
         }
 
         case SYS_RMDIR: {
-            // Not implemented yet - return error
-            return -1;
+            const char *path = (const char *)arg1;
+            char full_path[VFS_MAX_PATH];
+            build_path(path, full_path);
+            int res = fat32_rmdir_path(full_path);
+            return (res == 0) ? 0 : -1;
         }
 
         case SYS_UNLINK: {
-            // Not implemented yet - return error
-            return -1;
+            const char *path = (const char *)arg1;
+            char full_path[VFS_MAX_PATH];
+            build_path(path, full_path);
+            int res = fat32_rm_path(full_path);
+            return (res == 0) ? 0 : -1;
         }
 
         case SYS_READDIR: {
@@ -379,8 +385,46 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
         }
 
         case SYS_RENAME:
-        case SYS_TRUNCATE:
-        case SYS_CREATE:
+            // rename(old, new)
+        {
+            const char *oldp = (const char *)arg1;
+            const char *newp = (const char *)arg2;
+            char full_old[VFS_MAX_PATH];
+            char full_new[VFS_MAX_PATH];
+            build_path(oldp, full_old);
+            build_path(newp, full_new);
+            int res = fat32_mv_path(full_old, full_new);
+            return (res == 0) ? 0 : -1;
+        }
+
+        case SYS_TRUNCATE: {
+            const char *path = (const char *)arg1;
+            int size = (int)arg2;
+            char full_path[VFS_MAX_PATH];
+            build_path(path, full_path);
+            struct vfs_node *node = vfs_resolve_path(full_path);
+            if (!node) return -1;
+            return (fat32_truncate(node, size) == 0) ? 0 : -1;
+        }
+
+        case SYS_CREATE: {
+            const char *path = (const char *)arg1;
+            char full_path[VFS_MAX_PATH];
+            build_path(path, full_path);
+            if (fat32_touch_path(full_path) != 0) return -1;
+
+            struct vfs_node *node = vfs_resolve_path(full_path);
+            if (!node) return -1;
+
+            int fd = fd_alloc();
+            if (fd < 0) return -1;
+            fd_table[fd].node = node;
+            fd_table[fd].offset = 0;
+            fd_table[fd].flags = O_RDWR;
+            fd_table[fd].type = FD_FILE;
+            return fd;
+        }
+
         case SYS_SEEK:
         default:
             return -1;

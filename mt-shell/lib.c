@@ -3,6 +3,7 @@
 
 #include "../kernel/drivers/keyboard.h"
 #include "../kernel/fs/vfs.h"
+#include "../kernel/elf_loader.h"
 
 // ============================================================================
 // Memory Allocator (bump allocator with static buffer)
@@ -615,17 +616,13 @@ char* list_dir(const char* path) {
 // ============================================================================
 
 int exec_program(const char* path, char** args) {
-    // Check if file exists
-    struct vfs_node* node = vfs_resolve_path(path);
-    if (!node) {
-        return -1;  // File not found
-    }
-
-    // TODO: Implement ELF loader
-    // For now, just report that execution isn't implemented
-    mt_print("exec: not implemented yet: ");
+    mt_print("exec: path tried to execute: ");
     mt_print(path);
     mt_print("\n");
 
-    return -1;
+    struct vfs_node* node = vfs_resolve_path(path);
+    if (!node || !(node->flags & VFS_FILE)) {
+        return -1;  // Not found or not a file
+    }
+    return elf_execute(node, args);
 }
