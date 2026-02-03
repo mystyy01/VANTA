@@ -194,6 +194,22 @@ static int jump_to_entry(uint64_t entry, char **args) {
     // Prepare user stack
     uint8_t *sp = elf_stack + sizeof(elf_stack);
 
+    // Copy argument strings onto user stack and collect their user pointers
+    // Limit argc to a small safe number to avoid overflow
+    if (argc > 32) argc = 32;
+    char *argv_ptrs[32];
+    for (int i = argc - 1; i >= 0; i--) {
+        int len = 0;
+        while (args[i][len]) len++;
+        // include null terminator
+        sp -= (len + 1);
+        memcpy_local(sp, args[i], (uint32_t)(len + 1));
+        argv_ptrs[i] = (char *)sp;
+    }
+
+    // Align stack to 16 bytes for ABI compliance
+    sp = (uint8_t *)((uintptr_t)sp & ~0xF);
+
     // Push null terminator for argv
     sp -= sizeof(char *);
     *((char **)sp) = 0;
@@ -201,13 +217,10 @@ static int jump_to_entry(uint64_t entry, char **args) {
     // Push argv pointers in reverse order
     for (int i = argc - 1; i >= 0; i--) {
         sp -= sizeof(char *);
-        *((char **)sp) = args[i];
+        *((char **)sp) = argv_ptrs[i];
     }
 
     char **argv_ptr = (char **)sp;
-
-    // Align stack to 16 bytes for ABI compliance
-    sp = (uint8_t *)((uintptr_t)sp & ~0xF);
 
     // Additional 8-byte adjustment: System V ABI requires (RSP + 8) % 16 == 0
     // at function entry because 'call' pushes 8-byte return address.

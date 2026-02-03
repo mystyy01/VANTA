@@ -616,10 +616,6 @@ char* list_dir(const char* path) {
 // ============================================================================
 
 int exec_program(const char* path, char** args) {
-    mt_print("exec: path tried to execute: ");
-    mt_print(path);
-    mt_print("\n");
-
     struct vfs_node* node = vfs_resolve_path(path);
     if (!node || !(node->flags & VFS_FILE)) {
         return -1;  // Not found or not a file
