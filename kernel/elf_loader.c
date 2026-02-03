@@ -163,6 +163,9 @@ static int load_segments(const Elf64_Ehdr *eh) {
             uint64_t diff = ph->p_memsz - ph->p_filesz;
             memset_local(dst + ph->p_filesz, 0, (uint32_t)diff);
         }
+
+        // Mark segment pages as user-accessible
+        paging_mark_user_region((uint64_t)dst, ph->p_memsz);
     }
     return 0;
 }
