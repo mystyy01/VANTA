@@ -2,6 +2,7 @@
 #include "fs/fat32.h"
 #include "fs/vfs.h"
 #include "elf_loader.h"
+#include "sched.h"
 
 // ============================================================================
 // Console I/O (reuse mt-shell VGA writer so cursor stays consistent)
@@ -77,6 +78,19 @@ static struct fd_entry *fd_get(int fd) {
     if (fd < 0 || fd >= MAX_FDS) return 0;
     if (fd_table[fd].type == FD_UNUSED) return 0;
     return &fd_table[fd];
+}
+
+static int fd_seek(int fd, int offset, int whence) {
+    struct fd_entry *entry = fd_get(fd);
+    if (!entry || entry->type != FD_FILE) return -1;
+    int new_off = 0;
+    if (whence == SEEK_SET) new_off = offset;
+    else if (whence == SEEK_CUR) new_off = (int)entry->offset + offset;
+    else if (whence == SEEK_END) new_off = (int)entry->node->size + offset;
+    else return -1;
+    if (new_off < 0) return -1;
+    entry->offset = (uint32_t)new_off;
+    return new_off;
 }
 
 // ============================================================================
@@ -389,7 +403,18 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
             return (res == 0) ? 0 : -1;
         }
 
-        case SYS_SEEK:
+        case SYS_SEEK: {
+            int fd = (int)arg1;
+            int offset = (int)arg2;
+            int whence = (int)arg3;
+            return fd_seek(fd, offset, whence);
+        }
+
+        case SYS_YIELD: {
+            sched_yield();
+            return 0;
+        }
+
         default:
             return -1;
     }

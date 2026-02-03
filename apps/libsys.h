@@ -25,6 +25,7 @@
 #define SYS_TRUNCATE  14  // truncate(char *path, int size) -> 0 or -1 [TODO]
 #define SYS_CREATE    15  // create(char *path) -> fd or -1 [TODO]
 #define SYS_SEEK      16  // seek(int fd, int offset, int whence) -> new offset or -1
+#define SYS_YIELD     17  // yield()
 
 // ============================================================================
 // Open Flags
@@ -203,6 +204,10 @@ static inline int rename(const char *oldpath, const char *newpath) {
 
 static inline int seek(int fd, int offset, int whence) {
     return (int)syscall3(SYS_SEEK, fd, offset, whence);
+}
+
+static inline int yield(void) {
+    return (int)syscall0(SYS_YIELD);
 }
 
 #endif // LIBSYS_H

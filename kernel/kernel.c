@@ -6,6 +6,8 @@
 #include "fs/fat32.h"
 #include "fs/vfs.h"
 #include "paging.h"
+#include "pmm.h"
+#include "sched.h"
 #include "syscall.h"
 
 // Video memory starts at 0xB8000
@@ -33,6 +35,12 @@ void kernel_main(void) {
 
     // Initialize paging with user-accessible pages
     paging_init();
+
+    // Initialize physical memory manager (assume 2MB..64MB usable)
+    pmm_init(0x200000, 0x4000000);
+
+    // Initialize scheduler structures
+    sched_init();
 
     // Initialize keyboard and interrupts
     keyboard_init();

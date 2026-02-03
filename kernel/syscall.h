@@ -30,6 +30,7 @@
 #define SYS_TRUNCATE  14  // truncate(char *path, int size) -> 0 or -1
 #define SYS_CREATE    15  // create(char *path) -> fd or -1 (create new file)
 #define SYS_SEEK      16  // seek(int fd, int offset, int whence) -> new offset or -1
+#define SYS_YIELD     17  // yield() -> 0
 
 // Open flags
 #define O_RDONLY    0x0000

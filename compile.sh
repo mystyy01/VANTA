@@ -28,6 +28,7 @@ CFLAGS="-ffreestanding -mno-red-zone -fno-pic -mcmodel=large -I kernel -I kernel
 x86_64-elf-gcc $CFLAGS -c kernel/kernel.c -o kernel.o
 x86_64-elf-gcc $CFLAGS -c kernel/idt.c -o idt.o
 x86_64-elf-gcc $CFLAGS -c kernel/isr.c -o isr.o
+x86_64-elf-gcc $CFLAGS -c kernel/pmm.c -o pmm.o
 x86_64-elf-gcc $CFLAGS -c kernel/drivers/ata.c -o ata.o
 x86_64-elf-gcc $CFLAGS -c kernel/drivers/keyboard.c -o keyboard.o
 x86_64-elf-gcc $CFLAGS -c kernel/fs/vfs.c -o vfs.o
@@ -35,6 +36,8 @@ x86_64-elf-gcc $CFLAGS -c kernel/fs/fat32.c -o fat32.o
 x86_64-elf-gcc $CFLAGS -c kernel/paging.c -o paging.o
 x86_64-elf-gcc $CFLAGS -c kernel/syscall.c -o syscall.o
 x86_64-elf-gcc $CFLAGS -c kernel/elf_loader.c -o elf_loader.o
+x86_64-elf-gcc $CFLAGS -c kernel/sched.c -o sched.o
+nasm -f elf64 kernel/switch.asm -o switch.o
 
 # Compile mt-shell
 echo "[4/10] Compiling mt-shell runtime..."
@@ -45,7 +48,7 @@ x86_64-elf-gcc $CFLAGS -I kernel -c mt-shell/shell.c -o mt-shell/shell.o
 echo "[5/10] Linking kernel..."
 x86_64-elf-ld -T kernel/linker.ld -o kernel.bin \
     entry.o isr_asm.o syscall_entry.o kernel.o idt.o isr.o ata.o keyboard.o vfs.o fat32.o \
-    paging.o syscall.o elf_loader.o mt-shell/lib.o mt-shell/shell.o
+    paging.o pmm.o syscall.o elf_loader.o sched.o switch.o mt-shell/lib.o mt-shell/shell.o
 
 # Optional: build apps and copy to testfs
 if [[ $SYNC_APPS -eq 1 ]]; then

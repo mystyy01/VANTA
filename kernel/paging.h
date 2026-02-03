@@ -15,11 +15,17 @@
 #define PAGE_GLOBAL     (1ULL << 8)
 #define PAGE_PAT        (1ULL << 7)   // For 4KB PTEs, PAT shares bit 7
 
-// Initialize paging with user-accessible memory
+// Initialize paging with user-accessible memory for the bootstrap kernel
 void paging_init(void);
 
-// Mark an identity-mapped region as user-accessible (sets the U bit on
-// the corresponding 4 KiB pages). Size rounds up to whole pages.
+// Mark an identity-mapped region as user-accessible (bootstrap tables only)
 void paging_mark_user_region(uint64_t addr, uint64_t size);
+
+// Create a fresh user page table hierarchy with kernel identity maps copied.
+// Returns pointer to PML4 (physical address). Returns 0 on failure.
+uint64_t *paging_new_user_space(void);
+
+// Map a single 4 KiB page (identity VA==PA) with flags into given PML4.
+int paging_map_page(uint64_t *pml4, uint64_t addr, uint64_t flags);
 
 #endif
