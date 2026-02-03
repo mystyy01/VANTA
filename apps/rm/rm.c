@@ -1,5 +1,5 @@
 #include "../libsys.h"
-
+// TODO: rm -rf 
 int main(int argc, char **argv) {
     if (argc < 2) {
         print("Usage: rm <file> [file2 ...]\n");

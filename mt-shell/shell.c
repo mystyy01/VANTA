@@ -11,11 +11,15 @@
 extern void mt_print(const char* s);
 extern void print_char(int c);
 extern void print_int(int n);
-extern char* read_line(void);
 extern char* get_cwd(void);
 extern int set_cwd(const char* path);
 extern char* list_dir(const char* path);
 extern char* read_file(const char* path);
+extern void cursor_get(int *row, int *col);
+extern void set_cursor(int row, int col);
+#include "../kernel/drivers/keyboard.h"
+
+
 
 // ============================================================================
 // String utilities
@@ -211,7 +215,80 @@ extern int exec_program(const char* path, char** args);
 // Main shell
 // ============================================================================
 
+static char input_buffer[512];
+
+// Simple line editor with cursor tracking and prompt-aware redraw.
+static char* shell_read_line(void) {
+    int start_row, start_col;
+    cursor_get(&start_row, &start_col); // position after prompt
+
+    int len = 0;
+    int pos = 0;
+    int rendered_len = 0;
+
+    while (1) {
+        struct key_event ev = keyboard_get_event();
+        if (!ev.pressed) continue;
+
+        if ((ev.modifiers & MOD_CTRL) && (ev.key == 'c' || ev.key == 'C')) {
+            mt_print("^C\n");
+            input_buffer[0] = '\0';
+            return input_buffer;
+        }
+
+        if (ev.key == '\n') {
+            print_char('\n');
+            input_buffer[len] = '\0';
+            return input_buffer;
+        } else if (ev.key == '\b') {
+            if (pos > 0) {
+                for (int i = pos - 1; i < len - 1; i++) {
+                    input_buffer[i] = input_buffer[i + 1];
+                }
+                len--;
+                pos--;
+            }
+        } else if (ev.key == KEY_LEFT) {
+            if (pos > 0) pos--;
+        } else if (ev.key == KEY_RIGHT) {
+            if (pos < len) pos++;
+        } else if (ev.key >= 0x20 && ev.key < 0x7F) {
+            if (len < 510) {
+                for (int i = len; i > pos; i--) {
+                    input_buffer[i] = input_buffer[i - 1];
+                }
+                input_buffer[pos] = ev.key;
+                len++;
+                pos++;
+            }
+        }
+
+        // Redraw line from prompt start
+        set_cursor(start_row, start_col);
+        for (int i = 0; i < len; i++) {
+            print_char(input_buffer[i]);
+        }
+        // Clear leftover chars from previous render
+        for (int i = len; i < rendered_len; i++) {
+            print_char(' ');
+        }
+        rendered_len = len;
+
+        // Draw a visible caret at current position (underscore)
+        int abs_pos = start_col + pos;
+        int row = start_row + (abs_pos / 80);
+        int col = abs_pos % 80;
+        int save_row, save_col;
+        cursor_get(&save_row, &save_col);
+        set_cursor(row, col);
+        print_char('_');
+        set_cursor(row, col);
+        rendered_len = len > rendered_len ? len : rendered_len;
+    }
+}
+
 int shell_main(void) {
+    cmd_clear();
     mt_print("vanta-shell v0.2 - VANTA OS\n");
     mt_print("Type 'help' for available commands\n\n");
     
@@ -222,7 +299,7 @@ int shell_main(void) {
         mt_print(" $ ");
         
         // Read input
-        char* input = read_line();
+        char* input = shell_read_line();
         
         // Skip empty input
         if (!input || input[0] == '\0') {

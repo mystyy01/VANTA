@@ -164,6 +164,11 @@ int tolower(int c) {
 static int vga_row = 0;
 static int vga_col = 0;
 
+void cursor_get(int *row, int *col) {
+    if (row) *row = vga_row;
+    if (col) *col = vga_col;
+}
+
 void vga_scroll(void) {
     // Move all rows up by one
     for (int y = 0; y < VGA_HEIGHT - 1; y++) {
