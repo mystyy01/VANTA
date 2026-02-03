@@ -225,6 +225,9 @@ static char* shell_read_line(void) {
     int len = 0;
     int pos = 0;
     int rendered_len = 0;
+    int last_caret_pos = -1;
+    int last_caret_row = -1;
+    int last_caret_col = -1;
 
     while (1) {
         struct key_event ev = keyboard_get_event();
@@ -274,15 +277,27 @@ static char* shell_read_line(void) {
         }
         rendered_len = len;
 
+        // Erase previous caret by restoring the character/space underneath
+        if (last_caret_pos >= 0) {
+            int abs_last = start_col + last_caret_pos;
+            int lr = start_row + (abs_last / 80);
+            int lc = abs_last % 80;
+            set_cursor(lr, lc);
+            char ch = (last_caret_pos < len) ? input_buffer[last_caret_pos] : ' ';
+            print_char(ch);
+        }
+
         // Draw a visible caret at current position (underscore)
         int abs_pos = start_col + pos;
         int row = start_row + (abs_pos / 80);
         int col = abs_pos % 80;
-        int save_row, save_col;
-        cursor_get(&save_row, &save_col);
         set_cursor(row, col);
         print_char('_');
         set_cursor(row, col);
+
+        last_caret_pos = pos;
+        last_caret_row = row;
+        last_caret_col = col;
         rendered_len = len > rendered_len ? len : rendered_len;
     }
 }
