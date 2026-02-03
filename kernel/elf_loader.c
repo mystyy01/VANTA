@@ -1,10 +1,11 @@
 #include "elf_loader.h"
+#include "syscall.h"
+#include "paging.h"
 
-// Minimal ELF64 loader for VANTA OS.
+// Minimal ELF64 loader for VANTA OS with user-mode execution.
 // Assumptions:
 // - Flat physical addressing; we copy segments to their p_paddr.
-// - No paging; kernel and shell share address space, so caller must ensure
-//   binaries are placed in a safe region (we pick a fixed load window).
+// - User programs run in ring 3 via iretq; syscalls return via SYS_EXIT.
 // - No dynamic linking; only ET_EXEC static binaries are supported.
 
 // Simple local helpers (freestanding, no libc)
@@ -19,6 +20,45 @@ static void *memset_local(void *dst, int val, uint32_t n) {
     uint8_t *d = (uint8_t *)dst;
     while (n--) *d++ = (uint8_t)val;
     return dst;
+}
+
+// ============================================================================
+// User mode support: setjmp/longjmp style context for returning from user mode
+// ============================================================================
+
+// Saved kernel context (callee-saved registers + stack)
+static uint64_t saved_rbx;
+static uint64_t saved_rbp;
+static uint64_t saved_r12;
+static uint64_t saved_r13;
+static uint64_t saved_r14;
+static uint64_t saved_r15;
+static uint64_t saved_rsp;
+static uint64_t saved_rip;
+
+// Exit code from user program
+static volatile int user_exit_code;
+
+// Called by SYS_EXIT syscall handler to return to kernel
+void kernel_return_from_user(int exit_code) {
+    user_exit_code = exit_code;
+
+    // Restore callee-saved registers and jump back to saved return point
+    __asm__ volatile (
+        "mov %0, %%rbx\n"
+        "mov %1, %%rbp\n"
+        "mov %2, %%r12\n"
+        "mov %3, %%r13\n"
+        "mov %4, %%r14\n"
+        "mov %5, %%r15\n"
+        "mov %6, %%rsp\n"
+        "jmp *%7\n"
+        :
+        : "m"(saved_rbx), "m"(saved_rbp), "m"(saved_r12), "m"(saved_r13),
+          "m"(saved_r14), "m"(saved_r15), "m"(saved_rsp), "m"(saved_rip)
+        : "memory"
+    );
+    __builtin_unreachable();
 }
 
 // ELF definitions (subset)
@@ -127,29 +167,128 @@ static int load_segments(const Elf64_Ehdr *eh) {
     return 0;
 }
 
-// Execute loaded image: create a function pointer to entry and call it.
+// Temporary storage for iret parameters (avoids register pressure in inline asm)
+static uint64_t iret_sp;
+static uint64_t iret_entry;
+static uint64_t iret_argc;
+static uint64_t iret_argv;
+
+// Execute loaded image by entering ring 3 (user mode) via iret.
+// Returns when the program calls SYS_EXIT.
 static int jump_to_entry(uint64_t entry, char **args) {
-    // Prepare stack: place argv pointer array and a null terminator.
-    // We keep it minimal: argv[0] = program name, argv[1] = 0.
+    // Count argc from null-terminated args array
+    int argc = 0;
+    if (args) {
+        while (args[argc]) argc++;
+    }
+    if (argc == 0) {
+        // Fallback: at least provide a program name
+        static char *default_args[] = { "prog", 0 };
+        args = default_args;
+        argc = 1;
+    }
+
+    // Prepare user stack
     uint8_t *sp = elf_stack + sizeof(elf_stack);
-    sp -= sizeof(char *); // argv[1] = 0
+
+    // Push null terminator for argv
+    sp -= sizeof(char *);
     *((char **)sp) = 0;
-    sp -= sizeof(char *); // argv[0]
-    *((char **)sp) = (char *)"prog";
-    sp -= sizeof(int); // argc
-    *((int *)sp) = 1;
+
+    // Push argv pointers in reverse order
+    for (int i = argc - 1; i >= 0; i--) {
+        sp -= sizeof(char *);
+        *((char **)sp) = args[i];
+    }
+
+    char **argv_ptr = (char **)sp;
 
     // Align stack to 16 bytes for ABI compliance
-    uintptr_t sp_align = (uintptr_t)sp & ~0xF;
-    sp = (uint8_t *)sp_align;
+    sp = (uint8_t *)((uintptr_t)sp & ~0xF);
 
-    typedef int (*entry_fn)(int, char **);
-    entry_fn fn = (entry_fn)(uintptr_t)entry;
-    return fn(1, (char **)(sp + sizeof(int))); // argc=1, argv after argc
+    // Additional 8-byte adjustment: System V ABI requires (RSP + 8) % 16 == 0
+    // at function entry because 'call' pushes 8-byte return address.
+    // Since we're using iret (no call), we simulate it.
+    sp -= 8;
+
+    user_exit_code = -1;  // Default if something goes wrong
+
+    // Make stack pages user-accessible
+    paging_mark_user_region((uint64_t)elf_stack, sizeof(elf_stack));
+
+    // Store parameters in static variables to reduce register pressure
+    iret_sp = (uint64_t)sp;
+    iret_entry = entry;
+    iret_argc = (uint64_t)argc;
+    iret_argv = (uint64_t)argv_ptr;
+
+    // Step 1: Save kernel context (callee-saved registers)
+    __asm__ volatile (
+        "mov %%rbx, %0\n"
+        "mov %%rbp, %1\n"
+        "mov %%r12, %2\n"
+        "mov %%r13, %3\n"
+        : "=m"(saved_rbx), "=m"(saved_rbp), "=m"(saved_r12), "=m"(saved_r13)
+        :
+        : "memory"
+    );
+
+    __asm__ volatile (
+        "mov %%r14, %0\n"
+        "mov %%r15, %1\n"
+        "mov %%rsp, %2\n"
+        : "=m"(saved_r14), "=m"(saved_r15), "=m"(saved_rsp)
+        :
+        : "memory"
+    );
+
+    // Step 2: Save return address and enter user mode
+    __asm__ volatile (
+        // Save address of return point
+        "lea 1f(%%rip), %%rax\n"
+        "mov %%rax, %0\n"
+
+        // Load parameters into registers
+        "mov %1, %%r8\n"           // user stack
+        "mov %2, %%r9\n"           // entry point
+        "mov %3, %%rdi\n"          // argc
+        "mov %4, %%rsi\n"          // argv
+
+        // Push iret frame
+        "push $0x1B\n"             // SS = user data | ring 3
+        "push %%r8\n"              // RSP = user stack
+        "push $0x202\n"            // RFLAGS = IF enabled
+        "push $0x23\n"             // CS = user code | ring 3
+        "push %%r9\n"              // RIP = entry point
+
+        // Clear other registers
+        "xor %%rax, %%rax\n"
+        "xor %%rdx, %%rdx\n"
+        "xor %%rcx, %%rcx\n"
+        "xor %%r8, %%r8\n"
+        "xor %%r9, %%r9\n"
+        "xor %%r10, %%r10\n"
+        "xor %%r11, %%r11\n"
+
+        // Enter user mode
+        "iretq\n"
+
+        // Return point from kernel_return_from_user()
+        "1:\n"
+        // Re-enable interrupts (disabled by syscall instruction)
+        "sti\n"
+
+        : "=m"(saved_rip)
+        : "m"(iret_sp), "m"(iret_entry), "m"(iret_argc), "m"(iret_argv)
+        : "memory", "rax", "rcx", "rdx", "rdi", "rsi",
+          "r8", "r9", "r10", "r11"
+    );
+
+    // We reach here when kernel_return_from_user() restores context
+    return user_exit_code;
 }
 
 int elf_execute(struct vfs_node *node, char **args) {
-    (void)args; // args unused for now
     if (!node || !(node->flags & VFS_FILE)) return -10;
 
     if (node->size > ELF_MAX_SIZE) {

@@ -97,6 +97,9 @@ static uint32_t find_free_cluster(){
     return 0;
 }
 
+// Forward declaration
+static void string_to_fat32_name(const char *str, uint8_t *fat_name);
+
 int fat32_mkdir(struct vfs_node *parent, const char *name){
     uint32_t allocated_cluster = find_free_cluster(); // find free space to put the new directory
     if (allocated_cluster == 0) return -1; // disk full
@@ -140,6 +143,66 @@ int fat32_mkdir(struct vfs_node *parent, const char *name){
     write_cluster(parent->inode, cluster_buffer);
     return 0;
 
+}
+
+// Stub implementations (creation/deletion not fully supported yet)
+struct vfs_node *fat32_create_file(struct vfs_node *parent, const char *name) {
+    (void)parent; (void)name;
+    return 0;
+}
+
+int fat32_unlink(struct vfs_node *parent, const char *name) {
+    (void)parent; (void)name;
+    return -1;
+}
+
+int fat32_rmdir(struct vfs_node *parent, const char *name) {
+    (void)parent; (void)name;
+    return -1;
+}
+
+int fat32_rename(struct vfs_node *old_parent, const char *old_name,
+                 struct vfs_node *new_parent, const char *new_name) {
+    (void)old_parent; (void)old_name; (void)new_parent; (void)new_name;
+    return -1;
+}
+
+int fat32_truncate(struct vfs_node *node, int size) {
+    (void)node; (void)size;
+    return -1;
+}
+
+// Ensure an absolute directory path exists, creating intermediate dirs.
+struct vfs_node *ensure_path_exists(const char *path) {
+    if (!path || !*path) return 0;
+    if (!fs.cluster_start_lba) return 0; // FAT not initialised
+
+    struct vfs_node *current = &root_node;
+
+    // Skip leading slash
+    const char *p = path;
+    if (*p == '/') p++;
+
+    char component[VFS_MAX_NAME];
+    while (*p) {
+        int len = 0;
+        while (*p && *p != '/' && len < VFS_MAX_NAME - 1) {
+            component[len++] = *p++;
+        }
+        component[len] = 0;
+        if (*p == '/') p++;
+        if (len == 0) continue;
+
+        struct vfs_node *child = vfs_finddir(current, component);
+        if (!child) {
+            if (fat32_mkdir(current, component) != 0) return 0;
+            child = vfs_finddir(current, component);
+            if (!child) return 0;
+        }
+        if (!(child->flags & VFS_DIRECTORY)) return 0;
+        current = child;
+    }
+    return current;
 }
 
 // Check if cluster is end of chain

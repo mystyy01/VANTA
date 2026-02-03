@@ -1,6 +1,8 @@
 // VANTA Kernel
 
 #include "idt.h"
+#include "syscall.h"
+#include "paging.h"
 #include "drivers/ata.h"
 #include "drivers/keyboard.h"
 #include "fs/fat32.h"
@@ -33,6 +35,13 @@ void kernel_main(void) {
     keyboard_init();
     idt_init();
 
+    // Set up user-accessible page tables
+    paging_init();
+
+    // Initialize syscall mechanism
+    syscall_init();
+    print_color("Syscalls enabled", 2, 0x0A);
+
     // Initialize ATA and mount filesystem
     ata_init();
     ata_select_drive(ATA_DRIVE_SLAVE);
@@ -40,6 +49,12 @@ void kernel_main(void) {
     if (fat32_init(0) == 0) {
         print_color("FAT32 mounted", 1, 0x0A);
         vfs_set_root(fat32_get_root());
+        ensure_path_exists("/apps");
+        ensure_path_exists("/core");
+        ensure_path_exists("/users/root");
+        ensure_path_exists("/cfg");
+        ensure_path_exists("/temp");
+        ensure_path_exists("/dev");
     } else {
         print_color("FAT32 failed", 1, 0x0C);
     }

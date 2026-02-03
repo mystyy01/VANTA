@@ -79,4 +79,18 @@ int fat32_init(uint32_t partition_lba);
 // Get root directory node
 struct vfs_node *fat32_get_root(void);
 
+// Create directory at path if missing, return its node (absolute paths only)
+struct vfs_node *ensure_path_exists(const char *path);
+
+// Create a subdirectory under parent (helper used by ensure_path_exists)
+int fat32_mkdir(struct vfs_node *parent, const char *name);
+
+// Minimal stubs for file operations (not fully implemented)
+struct vfs_node *fat32_create_file(struct vfs_node *parent, const char *name);
+int fat32_unlink(struct vfs_node *parent, const char *name);
+int fat32_rmdir(struct vfs_node *parent, const char *name);
+int fat32_rename(struct vfs_node *old_parent, const char *old_name,
+                 struct vfs_node *new_parent, const char *new_name);
+int fat32_truncate(struct vfs_node *node, int size);
+
 #endif

@@ -11,6 +11,7 @@ nasm -f bin bootloader/boot.asm -o boot.bin
 echo "[2/8] Assembling kernel entry..."
 nasm -f elf64 kernel/entry.asm -o entry.o
 nasm -f elf64 kernel/isr.asm -o isr_asm.o
+nasm -f elf64 kernel/syscall_entry.asm -o syscall_entry.o
 
 # Compile C kernel
 echo "[3/8] Compiling kernel..."
@@ -23,6 +24,8 @@ x86_64-elf-gcc $CFLAGS -c kernel/drivers/keyboard.c -o keyboard.o
 x86_64-elf-gcc $CFLAGS -c kernel/fs/vfs.c -o vfs.o
 x86_64-elf-gcc $CFLAGS -c kernel/fs/fat32.c -o fat32.o
 x86_64-elf-gcc $CFLAGS -c kernel/elf_loader.c -o elf_loader.o
+x86_64-elf-gcc $CFLAGS -c kernel/syscall.c -o syscall.o
+x86_64-elf-gcc $CFLAGS -c kernel/paging.c -o paging.o
 
 # Compile mt-shell lib.c (C runtime for shell)
 echo "[4/8] Compiling mt-shell runtime..."
@@ -37,8 +40,9 @@ cd ..
 # Link kernel with mt-shell
 echo "[6/8] Linking kernel..."
 x86_64-elf-ld -T kernel/linker.ld -o kernel.bin \
-    entry.o isr_asm.o kernel.o idt.o isr.o ata.o keyboard.o vfs.o fat32.o \
-    elf_loader.o \
+    entry.o isr_asm.o syscall_entry.o \
+    kernel.o idt.o isr.o syscall.o paging.o \
+    ata.o keyboard.o vfs.o fat32.o elf_loader.o \
     mt-shell/lib.o mt-shell/shell.o
 
 # Create boot disk image
