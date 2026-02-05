@@ -10,11 +10,13 @@ DEFAULT ABS
 section .text
 global syscall_entry
 extern syscall_handler
+extern in_syscall
 
 syscall_entry:
     ; Save user stack pointer and switch to kernel stack
     mov [user_rsp], rsp
     lea rsp, [kernel_syscall_stack_top]
+    mov dword [in_syscall], 1
 
     ; Save registers we need to preserve
     push rcx        ; return RIP
@@ -34,8 +36,10 @@ syscall_entry:
     mov rsi, rdi    ; arg1 -> second param
     mov rdi, rax    ; syscall_num -> first param
 
+    sti
     ; Call the C handler
     call syscall_handler
+    cli
 
     ; Return value is in RAX - leave it there
 
@@ -51,6 +55,7 @@ syscall_entry:
 
     ; Restore user stack
     mov rsp, [user_rsp]
+    mov dword [in_syscall], 0
 
     ; Return to user mode
     o64 sysret

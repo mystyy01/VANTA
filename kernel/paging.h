@@ -20,6 +20,8 @@ void paging_init(void);
 
 // Mark an identity-mapped region as user-accessible (bootstrap tables only)
 void paging_mark_user_region(uint64_t addr, uint64_t size);
+// Mark an identity-mapped region as supervisor-only (bootstrap tables only)
+void paging_mark_supervisor_region(uint64_t addr, uint64_t size);
 
 // Create a fresh user page table hierarchy with kernel identity maps copied.
 // Returns pointer to PML4 (physical address). Returns 0 on failure.

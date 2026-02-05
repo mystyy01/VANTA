@@ -134,9 +134,15 @@ irq_common:
     push r14
     push r15
 
-    ; Call C handler with interrupt number as argument
+    ; Call C handler with interrupt number and frame pointer
     mov rdi, [rsp + 120]
+    mov rsi, rsp
     call irq_handler
+    test rax, rax
+    jnz .have_frame
+    mov rax, rsp
+.have_frame:
+    mov rsp, rax
 
     ; Restore all registers
     pop r15

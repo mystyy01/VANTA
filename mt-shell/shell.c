@@ -353,7 +353,7 @@ static char* shell_read_line(void) {
 }
 
 int shell_main(void) {
-    cmd_clear();
+    // cmd_clear();
     disable_hw_cursor();
     mt_print("phobos-shell v0.2 - PHOBOS\n");
     mt_print("Type 'help' for available commands\n\n");

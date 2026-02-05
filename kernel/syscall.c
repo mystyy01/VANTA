@@ -181,6 +181,8 @@ void syscall_init(void) {
 // Syscall handler
 // ============================================================================
 
+volatile int in_syscall = 0;
+
 uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
                          uint64_t arg3, uint64_t arg4, uint64_t arg5) {
     (void)arg4; (void)arg5;
@@ -189,6 +191,11 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
 
         case SYS_EXIT: {
             int exit_code = (int)arg1;
+            struct task *t = sched_current();
+            if (t && t->is_user) {
+                sched_exit(exit_code);
+                __builtin_unreachable();
+            }
             kernel_return_from_user(exit_code);
             __builtin_unreachable();
             return 0;

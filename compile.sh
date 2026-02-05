@@ -28,6 +28,7 @@ CFLAGS="-ffreestanding -mno-red-zone -fno-pic -mcmodel=large -I kernel -I kernel
 x86_64-elf-gcc $CFLAGS -c kernel/kernel.c -o kernel.o
 x86_64-elf-gcc $CFLAGS -c kernel/idt.c -o idt.o
 x86_64-elf-gcc $CFLAGS -c kernel/isr.c -o isr.o
+x86_64-elf-gcc $CFLAGS -c kernel/gdt.c -o gdt.o
 x86_64-elf-gcc $CFLAGS -c kernel/pmm.c -o pmm.o
 x86_64-elf-gcc $CFLAGS -c kernel/drivers/ata.c -o ata.o
 x86_64-elf-gcc $CFLAGS -c kernel/drivers/keyboard.c -o keyboard.o
@@ -47,7 +48,7 @@ x86_64-elf-gcc $CFLAGS -I kernel -c mt-shell/shell.c -o mt-shell/shell.o
 # Link kernel with mt-shell
 echo "[5/10] Linking kernel..."
 x86_64-elf-ld -T kernel/linker.ld -o kernel.bin \
-    entry.o isr_asm.o syscall_entry.o kernel.o idt.o isr.o ata.o keyboard.o vfs.o fat32.o \
+    entry.o isr_asm.o syscall_entry.o kernel.o idt.o isr.o gdt.o ata.o keyboard.o vfs.o fat32.o \
     paging.o pmm.o syscall.o elf_loader.o sched.o switch.o mt-shell/lib.o mt-shell/shell.o
 
 # Optional: build apps and copy to testfs

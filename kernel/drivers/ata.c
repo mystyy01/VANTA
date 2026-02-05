@@ -51,6 +51,7 @@ void ata_select_drive(int drive) {
 }
 
 int ata_read_sectors(uint32_t lba, uint8_t count, void *buffer) {
+    if (count == 0 || !buffer) return -1;
     ata_wait_ready();
 
     // Select drive and set high LBA bits (0xE0 for master, 0xF0 for slave)
@@ -80,6 +81,7 @@ int ata_read_sectors(uint32_t lba, uint8_t count, void *buffer) {
 }
 
 int ata_write_sectors(uint32_t lba, uint8_t count, const void *buffer) {
+    if (count == 0 || !buffer) return -1;
     ata_wait_ready();
 
     // Select drive and set high LBA bits (0xE0 for master, 0xF0 for slave)

@@ -114,10 +114,11 @@ typedef struct {
 // Loader workspace: a fixed 512 KB staging buffer in .bss to read the file
 // before mapping segments. This limits executable size accordingly.
 #define ELF_MAX_SIZE (512 * 1024)
-static uint8_t elf_file_buf[ELF_MAX_SIZE];
+// Keep large buffers in .lbss so they don't overlap scheduler state.
+static uint8_t elf_file_buf[ELF_MAX_SIZE] __attribute__((section(".lbss")));
 
 // Execution stack for loaded program (16 KB)
-static uint8_t elf_stack[16 * 1024] __attribute__((aligned(16)));
+static uint8_t elf_stack[16 * 1024] __attribute__((aligned(16), section(".lbss")));
 
 // Basic mt-shell print hook (declared in lib.c)
 extern void mt_print(const char *s);
@@ -142,6 +143,8 @@ static int validate_header(const Elf64_Ehdr *eh) {
 
 // Load PT_LOAD segments into memory
 static int load_segments(const Elf64_Ehdr *eh) {
+    const uint64_t USER_LOAD_MIN = 0x00200000;  // keep away from kernel/BSS
+    const uint64_t USER_LOAD_MAX = 0x01000000;  // 16 MiB identity-mapped
     const uint8_t *base = (const uint8_t *)eh;
     const uint8_t *ph_base = base + eh->e_phoff;
 
@@ -152,6 +155,11 @@ static int load_segments(const Elf64_Ehdr *eh) {
         // We treat p_paddr as the destination (flat physical address).
         uint8_t *dst = (uint8_t *)(uintptr_t)ph->p_paddr;
         const uint8_t *src = base + ph->p_offset;
+
+        // Basic bounds check to prevent overwriting kernel memory.
+        if (ph->p_paddr < USER_LOAD_MIN) return -20;
+        if (ph->p_memsz == 0) return -21;
+        if ((ph->p_paddr + ph->p_memsz) > USER_LOAD_MAX) return -22;
 
         // Copy file-backed portion
         if (ph->p_filesz > 0) {
@@ -305,6 +313,14 @@ static int jump_to_entry(uint64_t entry, char **args) {
 }
 
 int elf_execute(struct vfs_node *node, char **args) {
+    uint64_t entry = 0;
+    int ret = elf_load(node, &entry);
+    if (ret < 0) return ret;
+    ret = jump_to_entry(entry, args);
+    return ret;
+}
+
+int elf_load(struct vfs_node *node, uint64_t *entry_out) {
     if (!node || !(node->flags & VFS_FILE)) return -10;
 
     if (node->size > ELF_MAX_SIZE) {
@@ -327,7 +343,10 @@ int elf_execute(struct vfs_node *node, char **args) {
         return hv;
     }
 
-    load_segments(eh);
-    int ret = jump_to_entry(eh->e_entry, args);
-    return ret;
+    if (load_segments(eh) < 0) {
+        print_str("exec: bad segment\n");
+        return -13;
+    }
+    if (entry_out) *entry_out = eh->e_entry;
+    return 0;
 }

@@ -5,7 +5,8 @@
 static struct fat32_fs fs;
 static struct vfs_node root_node;
 static uint8_t sector_buffer[512];
-static uint8_t cluster_buffer[4096];  // Max 4KB cluster
+#define CLUSTER_BUFFER_SIZE 4096
+static uint8_t cluster_buffer[CLUSTER_BUFFER_SIZE];  // Max 4KB cluster
 
 // Directory entry buffer
 static struct dirent dirent_buf;
@@ -73,11 +74,15 @@ static uint32_t cluster_to_lba(uint32_t cluster) {
 
 // Read a cluster
 static int read_cluster(uint32_t cluster, void *buffer) {
+    if (fs.sectors_per_cluster == 0 || fs.bytes_per_cluster == 0) return FAT32_E_INVAL;
+    if (fs.bytes_per_cluster > CLUSTER_BUFFER_SIZE) return FAT32_E_INVAL;
     uint32_t lba = cluster_to_lba(cluster);
     return ata_read_sectors(lba, fs.sectors_per_cluster, buffer);
 }
 
 static int write_cluster(uint32_t cluster, void *buffer) {
+    if (fs.sectors_per_cluster == 0 || fs.bytes_per_cluster == 0) return FAT32_E_INVAL;
+    if (fs.bytes_per_cluster > CLUSTER_BUFFER_SIZE) return FAT32_E_INVAL;
     uint32_t lba = cluster_to_lba(cluster);
     return ata_write_sectors(lba, fs.sectors_per_cluster, buffer);
 }
@@ -621,6 +626,7 @@ static struct vfs_node *create_node(struct fat32_dir_entry *entry) {
 // Read file contents
 static int fat32_read(struct vfs_node *node, uint32_t offset, uint32_t size, uint8_t *buffer) {
     if (!node || !(node->flags & VFS_FILE)) return -1;
+    if (fs.bytes_per_cluster == 0 || fs.bytes_per_cluster > CLUSTER_BUFFER_SIZE) return -1;
 
     uint32_t cluster = node->inode;
     uint32_t bytes_read = 0;
@@ -662,6 +668,7 @@ static int fat32_read(struct vfs_node *node, uint32_t offset, uint32_t size, uin
 // Read directory entry by index
 static struct dirent *fat32_readdir(struct vfs_node *node, uint32_t index) {
     if (!node || !(node->flags & VFS_DIRECTORY)) return 0;
+    if (fs.bytes_per_cluster == 0 || fs.bytes_per_cluster > CLUSTER_BUFFER_SIZE) return 0;
 
     uint32_t cluster = node->inode;
     uint32_t entry_index = 0;
@@ -838,11 +845,24 @@ int fat32_init(uint32_t partition_lba) {
     if (bpb->fat_size_16 != 0 || bpb->fat_size_32 == 0) {
         return -1;  // Not FAT32
     }
+    if (bpb->bytes_per_sector != 512) {
+        return -1;
+    }
+    if (bpb->sectors_per_cluster == 0) {
+        return -1;
+    }
+    // Require power-of-two sectors per cluster
+    if ((bpb->sectors_per_cluster & (bpb->sectors_per_cluster - 1)) != 0) {
+        return -1;
+    }
 
     // Store filesystem info
     fs.bytes_per_sector = bpb->bytes_per_sector;
     fs.sectors_per_cluster = bpb->sectors_per_cluster;
     fs.bytes_per_cluster = fs.bytes_per_sector * fs.sectors_per_cluster;
+    if (fs.bytes_per_cluster > CLUSTER_BUFFER_SIZE) {
+        return -1;
+    }
     fs.fat_start_lba = partition_lba + bpb->reserved_sectors;
     fs.cluster_start_lba = fs.fat_start_lba + (bpb->num_fats * bpb->fat_size_32);
     fs.root_cluster = bpb->root_cluster;

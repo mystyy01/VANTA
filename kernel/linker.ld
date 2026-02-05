@@ -22,9 +22,11 @@ SECTIONS
     }
 
     .bss : {
+        __bss_start = .;
         *(.bss)
         *(.lbss)
         *(COMMON)
+        __bss_end = .;
     }
 
     /DISCARD/ : {

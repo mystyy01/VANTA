@@ -1,6 +1,8 @@
 #include "idt.h"
 
 #define IDT_ENTRIES 256
+#define PIT_HZ 100
+#define PIT_FREQ 1193182
 
 static struct idt_entry idt[IDT_ENTRIES];
 static struct idt_ptr idtp;
@@ -41,6 +43,10 @@ extern void isr31(void);
 extern void irq0(void);
 extern void irq1(void);
 
+static inline void outb(uint16_t port, uint8_t val) {
+    __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
+}
+
 void idt_set_gate(int n, uint64_t handler) {
     idt[n].offset_low = handler & 0xFFFF;
     idt[n].selector = 0x08;  // Kernel code segment
@@ -54,24 +60,31 @@ void idt_set_gate(int n, uint64_t handler) {
 // Remap PIC to avoid conflicts with CPU exceptions
 static void pic_remap(void) {
     // ICW1: Start initialization
-    __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0x11), "Nd"((uint16_t)0x20));
-    __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0x11), "Nd"((uint16_t)0xA0));
+    outb(0x20, 0x11);
+    outb(0xA0, 0x11);
 
     // ICW2: Vector offsets (IRQ 0-7 -> INT 32-39, IRQ 8-15 -> INT 40-47)
-    __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0x20), "Nd"((uint16_t)0x21));
-    __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0x28), "Nd"((uint16_t)0xA1));
+    outb(0x21, 0x20);
+    outb(0xA1, 0x28);
 
     // ICW3: PIC cascading
-    __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0x04), "Nd"((uint16_t)0x21));
-    __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0x02), "Nd"((uint16_t)0xA1));
+    outb(0x21, 0x04);
+    outb(0xA1, 0x02);
 
     // ICW4: 8086 mode
-    __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0x01), "Nd"((uint16_t)0x21));
-    __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0x01), "Nd"((uint16_t)0xA1));
+    outb(0x21, 0x01);
+    outb(0xA1, 0x01);
 
     // Mask all interrupts except IRQ0 (timer) and IRQ1 (keyboard)
-    __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0xFC), "Nd"((uint16_t)0x21));
-    __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0xFF), "Nd"((uint16_t)0xA1));
+    outb(0x21, 0xFC);
+    outb(0xA1, 0xFF);
+}
+
+static void pit_init(void) {
+    uint16_t divisor = (uint16_t)(PIT_FREQ / PIT_HZ);
+    outb(0x43, 0x36);
+    outb(0x40, (uint8_t)(divisor & 0xFF));
+    outb(0x40, (uint8_t)((divisor >> 8) & 0xFF));
 }
 
 void idt_init(void) {
@@ -121,6 +134,8 @@ void idt_init(void) {
     idtp.base = (uint64_t)&idt;
     __asm__ volatile ("lidt %0" : : "m"(idtp));
 
-    // Enable interrupts
-    __asm__ volatile ("sti");
+    // Program PIT to periodic interrupts
+    pit_init();
+
+    // Interrupts are enabled later once scheduling is ready.
 }
