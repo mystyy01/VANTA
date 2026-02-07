@@ -219,7 +219,13 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
             if (fd < 0) return -1;
             struct fd_entry *entry = task_fd_get(t, fd);
             if (!entry || fd < 3) return -1;
-
+            if (entry->type == FD_PIPE && entry->pipe) {
+                if (entry->flags == O_RDONLY) {                                                                                                                                                 
+                    entry->pipe->read_open = 0;
+                } else if (entry->flags == O_WRONLY) {
+                    entry->pipe->write_open = 0;
+                }
+            }
             task_fd_free(t, fd);
             return 0;
         }
@@ -410,6 +416,17 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
             fds[1] = write_fd;
 
             return 0;
+        }
+        case SYS_DUP2: {
+            int oldfd = (int)arg1;
+            int newfd = (int)arg2;
+            struct task *t = sched_current();
+            struct fd_entry *old = task_fd_get(t, oldfd);
+            if (!old) return -1;
+            if (newfd < 0 || newfd >= MAX_FDS) return -1;
+            if (t->fd_table[newfd].type != FD_UNUSED) task_fd_free(t, newfd); 
+            t->fd_table[newfd] = t->fd_table[oldfd];
+            return newfd;
         }
 
         default:

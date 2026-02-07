@@ -32,6 +32,7 @@
 #define SYS_SEEK      16  // seek(int fd, int offset, int whence) -> new offset or -1
 #define SYS_YIELD     17  // yield() -> 0
 #define SYS_PIPE      18  // pipe(int fds[2]) -> 0 or -1
+#define SYS_DUP2      19  //dup2(int oldfd, int newfd) -> newfd or -1
 
 // Open flags
 #define O_RDONLY    0x0000

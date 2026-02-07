@@ -16,16 +16,18 @@
 #define SYS_STAT      5   // stat(char *path, struct stat *buf) -> 0 or -1
 #define SYS_FSTAT     6   // fstat(int fd, struct stat *buf) -> 0 or -1
 #define SYS_MKDIR     7   // mkdir(char *path) -> 0 or -1
-#define SYS_RMDIR     8   // rmdir(char *path) -> 0 or -1  [TODO]
-#define SYS_UNLINK    9   // unlink(char *path) -> 0 or -1 [TODO]
+#define SYS_RMDIR     8   // rmdir(char *path) -> 0 or -1
+#define SYS_UNLINK    9   // unlink(char *path) -> 0 or -1
 #define SYS_READDIR   10  // readdir(int fd, struct dirent *buf, int index) -> 0 or -1
 #define SYS_CHDIR     11  // chdir(char *path) -> 0 or -1
-#define SYS_GETCWD    12  // getcwd(char *buf, int size) -> length or -1
-#define SYS_RENAME    13  // rename(char *old, char *new) -> 0 or -1 [TODO]
-#define SYS_TRUNCATE  14  // truncate(char *path, int size) -> 0 or -1 [TODO]
-#define SYS_CREATE    15  // create(char *path) -> fd or -1 [TODO]
+#define SYS_GETCWD    12  // getcwd(char *buf, int size) -> buf or NULL
+#define SYS_RENAME    13  // rename(char *old, char *new) -> 0 or -1
+#define SYS_TRUNCATE  14  // truncate(char *path, int size) -> 0 or -1
+#define SYS_CREATE    15  // create(char *path) -> fd or -1 (create new file)
 #define SYS_SEEK      16  // seek(int fd, int offset, int whence) -> new offset or -1
-#define SYS_YIELD     17  // yield()
+#define SYS_YIELD     17  // yield() -> 0
+#define SYS_PIPE      18  // pipe(int fds[2]) -> 0 or -1
+#define SYS_DUP2      19  //dup2(int oldfd, int newfd) -> newfd or -1
 
 // ============================================================================
 // Open Flags
@@ -208,6 +210,13 @@ static inline int seek(int fd, int offset, int whence) {
 
 static inline int yield(void) {
     return (int)syscall0(SYS_YIELD);
+}
+
+static inline int pipe(int fds[2]){
+    return (int)syscall1(SYS_PIPE, (long)fds);
+}
+static inline int dup2(int oldfd, int newfd){
+    return (int)syscall2(SYS_DUP2, oldfd, newfd);
 }
 
 #endif // LIBSYS_H
