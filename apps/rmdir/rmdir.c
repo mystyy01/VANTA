@@ -20,9 +20,9 @@ int main(int argc, char **argv) {
         int result = rmdir(path);
 
         if (result == 0) {
-            print("rmdir: removed '");
-            print(path);
-            print("'\n");
+            // print("rmdir: removed '");
+            // print(path);
+            // print("'\n");
         } else {
             print("rmdir: failed to remove '");
             print(path);

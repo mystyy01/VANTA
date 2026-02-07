@@ -20,9 +20,8 @@ int main(int argc, char **argv) {
         int result = create(path);
 
         if (result == 0) {  // create returns 0 on success now
-            print("touch: created '");
-            print(path);
-            print("'\n");
+            // print("touch: created '");
+            // print(path);
         } else {
             print("touch: failed to create '");
             print(path);

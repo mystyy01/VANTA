@@ -21,9 +21,9 @@ int main(int argc, char **argv) {
         int result = mkdir(path);
 
         if (result == 0) {
-            print("mkdir: created '");
-            print(path);
-            print("'\n");
+            // print("mkdir: created '");
+            // print(path);
+            // print("'\n");
         } else {
             print("mkdir: failed to create '");
             print(path);

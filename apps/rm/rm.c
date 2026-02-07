@@ -20,9 +20,9 @@ int main(int argc, char **argv) {
         int result = unlink(path);
 
         if (result == 0) {
-            print("rm: removed '");
-            print(path);
-            print("'\n");
+            // print("rm: removed '");
+            // print(path);
+            // print("'\n");
         } else {
             print("rm: failed to remove '");
             print(path);

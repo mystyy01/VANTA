@@ -18,88 +18,6 @@ static int console_write(const char *buf, int count) {
 }
 
 // ============================================================================
-// File Descriptor Table
-// ============================================================================
-
-#define MAX_FDS 64
-#define FD_UNUSED   0
-#define FD_FILE     1
-#define FD_DIR      2
-#define FD_CONSOLE  3
-
-struct fd_entry {
-    int type;
-    struct vfs_node *node;
-    uint32_t offset;
-    int flags;
-};
-
-static struct fd_entry fd_table[MAX_FDS];
-static int fd_initialized = 0;
-
-static void fd_init(void) {
-    if (fd_initialized) return;
-
-    for (int i = 0; i < MAX_FDS; i++) {
-        fd_table[i].type = FD_UNUSED;
-        fd_table[i].node = 0;
-        fd_table[i].offset = 0;
-        fd_table[i].flags = 0;
-    }
-
-    fd_table[STDIN_FD].type = FD_CONSOLE;
-    fd_table[STDOUT_FD].type = FD_CONSOLE;
-    fd_table[STDERR_FD].type = FD_CONSOLE;
-
-    fd_initialized = 1;
-}
-
-static int fd_alloc(void) {
-    fd_init();
-    for (int i = 3; i < MAX_FDS; i++) {
-        if (fd_table[i].type == FD_UNUSED) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-static void fd_free(int fd) {
-    if (fd >= 3 && fd < MAX_FDS) {
-        fd_table[fd].type = FD_UNUSED;
-        fd_table[fd].node = 0;
-        fd_table[fd].offset = 0;
-        fd_table[fd].flags = 0;
-    }
-}
-
-static struct fd_entry *fd_get(int fd) {
-    fd_init();
-    if (fd < 0 || fd >= MAX_FDS) return 0;
-    if (fd_table[fd].type == FD_UNUSED) return 0;
-    return &fd_table[fd];
-}
-
-static int fd_seek(int fd, int offset, int whence) {
-    struct fd_entry *entry = fd_get(fd);
-    if (!entry || entry->type != FD_FILE) return -1;
-    int new_off = 0;
-    if (whence == SEEK_SET) new_off = offset;
-    else if (whence == SEEK_CUR) new_off = (int)entry->offset + offset;
-    else if (whence == SEEK_END) new_off = (int)entry->node->size + offset;
-    else return -1;
-    if (new_off < 0) return -1;
-    entry->offset = (uint32_t)new_off;
-    return new_off;
-}
-
-// ============================================================================
-// Current Working Directory
-// ============================================================================
-
-static char current_dir[VFS_MAX_PATH] = "/";
-
-// ============================================================================
 // MSR helpers
 // ============================================================================
 
@@ -135,13 +53,14 @@ static void str_copy(char *dst, const char *src, int max) {
 }
 
 static void build_path(const char *path, char *out) {
+    struct task *t = sched_current();
     if (path[0] == '/') {
         str_copy(out, path, VFS_MAX_PATH);
     } else {
-        int cwd_len = str_len(current_dir);
-        str_copy(out, current_dir, VFS_MAX_PATH);
+        int cwd_len = str_len(t->cwd);
+        str_copy(out, t->cwd, VFS_MAX_PATH);
 
-        if (cwd_len > 0 && current_dir[cwd_len-1] != '/') {
+        if (cwd_len > 0 && t->cwd[cwd_len-1] != '/') {
             out[cwd_len] = '/';
             out[cwd_len + 1] = '\0';
             cwd_len++;
@@ -163,7 +82,6 @@ static void build_path(const char *path, char *out) {
 extern void syscall_entry(void);
 
 void syscall_init(void) {
-    fd_init();
 
     uint64_t efer = rdmsr(MSR_EFER);
     efer |= EFER_SCE;
@@ -206,11 +124,12 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
             char *buf = (char *)arg2;
             int count = (int)arg3;
 
-            struct fd_entry *entry = fd_get(fd);
+            struct task *t = sched_current();
+            struct fd_entry *entry = task_fd_get(t, fd);
             if (!entry) return -1;
 
             if (entry->type == FD_CONSOLE) {
-                return 0;  // TODO: keyboard input
+                return 0;  
             }
 
             if (entry->type == FD_FILE && entry->node) {
@@ -220,6 +139,18 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
                 }
                 return bytes;
             }
+            if (entry->type == FD_PIPE){
+                struct pipe *p = entry->pipe;
+                if (p->count == 0) return 0;
+                int to_read = p->count;
+                if (to_read > count) to_read = count;
+                for (int i = 0; i < to_read; i++){
+                    buf[i] = p->buffer[p->read_pos];
+                    p->read_pos = (p->read_pos + 1) % PIPE_BUF_SIZE;
+                    p->count--;
+                }
+                return to_read;
+            }
 
             return -1;
         }
@@ -228,14 +159,26 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
             int fd = (int)arg1;
             const char *buf = (const char *)arg2;
             int count = (int)arg3;
-
-            struct fd_entry *entry = fd_get(fd);
+            struct task *t = sched_current();
+            struct fd_entry *entry = task_fd_get(t, fd);
             if (!entry) return -1;
 
             if (entry->type == FD_CONSOLE) {
                 return console_write(buf, count);
             }
-
+            if (entry->type == FD_PIPE){
+                struct pipe *p = entry->pipe;
+                if (p->count >= PIPE_BUF_SIZE) return 0;
+                int free_space = PIPE_BUF_SIZE - p->count;
+                int to_write = count;
+                if (to_write > free_space) to_write = free_space;
+                for (int i = 0; i < to_write; i++){
+                    p->buffer[p->write_pos] = buf[i];
+                    p->write_pos = (p->write_pos + 1) % PIPE_BUF_SIZE;
+                    p->count++;
+                }
+                return to_write;
+            }
             return -1;
         }
 
@@ -248,22 +191,23 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
 
             struct vfs_node *node = vfs_resolve_path(full_path);
             if (!node) return -1;
+            struct task *t = sched_current();
+            int fd = task_fd_alloc(t);
 
-            int fd = fd_alloc();
             if (fd < 0) return -1;
 
-            fd_table[fd].node = node;
-            fd_table[fd].offset = 0;
-            fd_table[fd].flags = flags;
+            t->fd_table[fd].node = node;
+            t->fd_table[fd].offset = 0;
+            t->fd_table[fd].flags = flags;
 
             if (node->flags & VFS_DIRECTORY) {
-                fd_table[fd].type = FD_DIR;
+                t->fd_table[fd].type = FD_DIR;
             } else {
-                fd_table[fd].type = FD_FILE;
+                t->fd_table[fd].type = FD_FILE;
             }
 
-            if ((flags & O_APPEND) && (fd_table[fd].type == FD_FILE)) {
-                fd_table[fd].offset = node->size;
+            if ((flags & O_APPEND) && (t->fd_table[fd].type == FD_FILE)) {
+                t->fd_table[fd].offset = node->size;
             }
 
             return fd;
@@ -271,10 +215,12 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
 
         case SYS_CLOSE: {
             int fd = (int)arg1;
-            struct fd_entry *entry = fd_get(fd);
+            struct task *t = sched_current();
+            if (fd < 0) return -1;
+            struct fd_entry *entry = task_fd_get(t, fd);
             if (!entry || fd < 3) return -1;
 
-            fd_free(fd);
+            task_fd_free(t, fd);
             return 0;
         }
 
@@ -297,9 +243,10 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
 
         case SYS_FSTAT: {
             int fd = (int)arg1;
+            if (fd < 0) return -1;
             struct stat *buf = (struct stat *)arg2;
-
-            struct fd_entry *entry = fd_get(fd);
+            struct task *t = sched_current();
+            struct fd_entry *entry = task_fd_get(t, fd);
             if (!entry || !entry->node) return -1;
 
             buf->st_size = entry->node->size;
@@ -337,10 +284,13 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
 
         case SYS_READDIR: {
             int fd = (int)arg1;
+            if (fd < 0) return -1;
             struct user_dirent *buf = (struct user_dirent *)arg2;
             int index = (int)arg3;
 
-            struct fd_entry *entry = fd_get(fd);
+            struct task *t = sched_current();
+
+            struct fd_entry *entry = task_fd_get(t, fd);
             if (!entry || entry->type != FD_DIR || !entry->node) return -1;
 
             struct dirent *dent = vfs_readdir(entry->node, index);
@@ -355,6 +305,7 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
         }
 
         case SYS_CHDIR: {
+            struct task *t = sched_current();
             const char *path = (const char *)arg1;
 
             char full_path[VFS_MAX_PATH];
@@ -364,18 +315,19 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
             if (!node) return -1;
             if (!(node->flags & VFS_DIRECTORY)) return -1;
 
-            str_copy(current_dir, full_path, VFS_MAX_PATH);
+            str_copy(t->cwd, full_path, VFS_MAX_PATH);
             return 0;
         }
 
         case SYS_GETCWD: {
+            struct task *t = sched_current();
             char *buf = (char *)arg1;
             int size = (int)arg2;
 
-            int len = str_len(current_dir);
+            int len = str_len(t->cwd);
             if (len >= size) return -1;
 
-            str_copy(buf, current_dir, size);
+            str_copy(buf, t->cwd, size);
             return len;
         }
 
@@ -411,14 +363,52 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
         }
 
         case SYS_SEEK: {
+            struct task *t = sched_current();
             int fd = (int)arg1;
+            struct fd_entry *entry = task_fd_get(t, fd);
+            if (!entry || entry->type == FD_CONSOLE || entry->type == FD_DIR) return -1;
             int offset = (int)arg2;
             int whence = (int)arg3;
-            return fd_seek(fd, offset, whence);
+            int new_offset = 0;
+            if (whence == SEEK_SET) new_offset = offset;
+            if (whence == SEEK_CUR) new_offset = entry->offset + offset;
+            if (whence == SEEK_END) new_offset = entry->node->size + offset;
+            if (new_offset < 0) return -1;
+            entry->offset = new_offset;
+            return new_offset;
         }
 
         case SYS_YIELD: {
             sched_yield();
+            return 0;
+        }
+        case SYS_PIPE: {
+            int *fds = (int *)arg1;
+
+            struct task *t = sched_current();
+            struct pipe *pipe = pipe_alloc();
+            if (!pipe) return -1;
+            int read_fd = task_fd_alloc(t);
+            if (read_fd < 0) return -1;
+
+            int write_fd = task_fd_alloc(t);
+            if (write_fd < 0){
+                task_fd_free(t, read_fd);
+                return -1;
+            }
+            // setup read_fd 
+            t->fd_table[read_fd].type = FD_PIPE;
+            t->fd_table[read_fd].pipe = pipe;
+            t->fd_table[read_fd].flags = O_RDONLY;
+
+            // setup write_fd
+            t->fd_table[write_fd].type = FD_PIPE;
+            t->fd_table[write_fd].pipe = pipe;
+            t->fd_table[write_fd].flags = O_WRONLY;
+
+            fds[0] = read_fd;
+            fds[1] = write_fd;
+
             return 0;
         }
 

@@ -8,6 +8,7 @@
 #include "syscall.h"
 
 #define MAX_TASKS 16
+#define MAX_PIPES 16
 #define KSTACK_SIZE (16 * 1024)
 #define USTACK_SIZE (16 * 1024)
 #define KSTACK_PAGES (KSTACK_SIZE / 4096)
@@ -16,10 +17,10 @@
 static struct task tasks[MAX_TASKS];
 static struct task *runq = 0;
 static struct task *current = 0;
+static struct pipe pipes[MAX_PIPES];
 static uint64_t next_task_id = 1;
 static int sched_ready = 0;
 static int sched_running = 0;
-
 // Stacks are now allocated from PMM (above 1MB) to avoid ROM area
 static uint8_t *kstacks[MAX_TASKS];  // Pointers to PMM-allocated stacks
 static uint8_t *ustacks[MAX_TASKS];  // Pointers to PMM-allocated stacks
@@ -73,6 +74,7 @@ static struct task *alloc_task(void) {
             tasks[i].entry = 0;
             tasks[i].is_user = 0;
             tasks[i].is_idle = 0;
+            task_fd_init(&tasks[i]);  // Initialize per-process FD table
             return &tasks[i];
         }
     }
@@ -252,4 +254,64 @@ void sched_exit(int code) {
 
 struct task *sched_current(void) {
     return current;
+}
+
+// ============================================================================
+// Per-process FD table helpers
+// ============================================================================
+
+void task_fd_init(struct task *t) {
+    // - Clear all 64 entries to FD_UNUSED
+    for (int i = 0; i < MAX_FDS; i++){
+        t->fd_table[i].type = FD_UNUSED;
+    }
+    // - Set up fd 0, 1, 2 as FD_CONSOLE (stdin, stdout, stderr)
+    t->fd_table[0].type = FD_CONSOLE;
+    t->fd_table[1].type = FD_CONSOLE;
+    t->fd_table[2].type = FD_CONSOLE;
+
+    // - Initialize cwd to "/"
+    t->cwd[0] = '/';
+    t->cwd[1] = '\0';
+}
+
+int task_fd_alloc(struct task *t) {
+    for (int i = 3; i < MAX_FDS; i++) {
+        if (t->fd_table[i].type == FD_UNUSED) {
+            return i;
+        }
+    }
+    return -1;  // No free FDs
+}
+
+void task_fd_free(struct task *t, int fd) {
+    if (fd >= 3 && fd < MAX_FDS) {
+        t->fd_table[fd].type = FD_UNUSED;
+        t->fd_table[fd].node = 0;
+        t->fd_table[fd].offset = 0;
+        t->fd_table[fd].flags = 0;
+    }
+}
+
+struct fd_entry *task_fd_get(struct task *t, int fd) {
+    if (fd < 0 || fd >= MAX_FDS) return 0;
+    if (t->fd_table[fd].type == FD_UNUSED) return 0;
+    return &t->fd_table[fd];
+}
+
+struct pipe *pipe_alloc(void){
+    for (int i = 0; i < MAX_PIPES; i++){
+        if (pipes[i].read_open == 0 && pipes[i].write_open == 0){
+            // found and empty spot for a pipe
+            pipes[i].read_pos = 0;
+            pipes[i].write_pos = 0;
+            pipes[i].count = 0;
+
+            pipes[i].read_open = 1;
+            pipes[i].write_open = 1;
+
+            return &pipes[i];
+        }   
+    }
+    return 0; 
 }
