@@ -1,6 +1,7 @@
 #include "elf_loader.h"
 #include "syscall.h"
 #include "paging.h"
+#include "pmm.h"
 
 // Minimal ELF64 loader for PHOBOS with user-mode execution.
 // Assumptions:
@@ -111,14 +112,38 @@ typedef struct {
 
 #define PT_LOAD 1
 
-// Loader workspace: a fixed 512 KB staging buffer in .bss to read the file
-// before mapping segments. This limits executable size accordingly.
+// Loader workspace: staging buffer to read ELF files before mapping segments.
+// Allocated from PMM (above 1MB) to avoid ROM area conflicts.
 #define ELF_MAX_SIZE (512 * 1024)
-// Keep large buffers in .lbss so they don't overlap scheduler state.
-static uint8_t elf_file_buf[ELF_MAX_SIZE] __attribute__((section(".lbss")));
+#define ELF_FILE_PAGES (ELF_MAX_SIZE / 4096)
+#define ELF_STACK_SIZE (16 * 1024)
+#define ELF_STACK_PAGES (ELF_STACK_SIZE / 4096)
 
-// Execution stack for loaded program (16 KB)
-static uint8_t elf_stack[16 * 1024] __attribute__((aligned(16), section(".lbss")));
+static uint8_t *elf_file_buf = 0;
+static uint8_t *elf_stack = 0;
+static int elf_loader_initialized = 0;
+
+// Allocate ELF loader buffers from PMM (called once at first use)
+static int elf_loader_init(void) {
+    if (elf_loader_initialized) return 0;
+
+    // Allocate file buffer (512KB = 128 pages)
+    elf_file_buf = (uint8_t *)pmm_alloc_page();
+    if (!elf_file_buf) return -1;
+    for (int i = 1; i < ELF_FILE_PAGES; i++) {
+        if (!pmm_alloc_page()) return -1;  // Contiguous allocation
+    }
+
+    // Allocate stack (16KB = 4 pages)
+    elf_stack = (uint8_t *)pmm_alloc_page();
+    if (!elf_stack) return -1;
+    for (int i = 1; i < ELF_STACK_PAGES; i++) {
+        if (!pmm_alloc_page()) return -1;
+    }
+
+    elf_loader_initialized = 1;
+    return 0;
+}
 
 // Basic mt-shell print hook (declared in lib.c)
 extern void mt_print(const char *s);
@@ -200,7 +225,7 @@ static int jump_to_entry(uint64_t entry, char **args) {
     }
 
     // Prepare user stack
-    uint8_t *sp = elf_stack + sizeof(elf_stack);
+    uint8_t *sp = elf_stack + ELF_STACK_SIZE;
 
     // Copy argument strings onto user stack and collect their user pointers
     // Limit argc to a small safe number to avoid overflow
@@ -238,7 +263,7 @@ static int jump_to_entry(uint64_t entry, char **args) {
     user_exit_code = -1;  // Default if something goes wrong
 
     // Make stack pages user-accessible
-    paging_mark_user_region((uint64_t)elf_stack, sizeof(elf_stack));
+    paging_mark_user_region((uint64_t)elf_stack, ELF_STACK_SIZE);
 
     // Store parameters in static variables to reduce register pressure
     iret_sp = (uint64_t)sp;
@@ -322,6 +347,12 @@ int elf_execute(struct vfs_node *node, char **args) {
 
 int elf_load(struct vfs_node *node, uint64_t *entry_out) {
     if (!node || !(node->flags & VFS_FILE)) return -10;
+
+    // Initialize ELF loader buffers on first use
+    if (elf_loader_init() < 0) {
+        print_str("exec: failed to allocate buffers\n");
+        return -14;
+    }
 
     if (node->size > ELF_MAX_SIZE) {
         print_str("exec: file too large\n");

@@ -1,5 +1,6 @@
 #include "sched.h"
 #include "paging.h"
+#include "pmm.h"
 #include "elf_loader.h"
 #include "fs/vfs.h"
 #include "isr.h"
@@ -9,6 +10,8 @@
 #define MAX_TASKS 16
 #define KSTACK_SIZE (16 * 1024)
 #define USTACK_SIZE (16 * 1024)
+#define KSTACK_PAGES (KSTACK_SIZE / 4096)
+#define USTACK_PAGES (USTACK_SIZE / 4096)
 
 static struct task tasks[MAX_TASKS];
 static struct task *runq = 0;
@@ -17,45 +20,43 @@ static uint64_t next_task_id = 1;
 static int sched_ready = 0;
 static int sched_running = 0;
 
-static uint8_t kstacks[MAX_TASKS][KSTACK_SIZE] __attribute__((aligned(4096)));
-static uint8_t ustacks[MAX_TASKS][USTACK_SIZE] __attribute__((aligned(4096)));
-volatile uint64_t sched_last_next_cs = 0;
-volatile int sched_last_next_is_user = 0;
-volatile int sched_dbg_runq = 0;
-volatile int sched_dbg_user = 0;
-volatile int sched_dbg_ready = 0;
-volatile int sched_dbg_running = 0;
-volatile int sched_dbg_has_runq = 0;
-volatile int sched_dbg_has_current = 0;
-volatile int sched_dbg_in_syscall = 0;
-volatile int sched_dbg_inited = 0;
-volatile int sched_dbg_bootstrap = 0;
-volatile int sched_dbg_created_user = 0;
-volatile int sched_dbg_created_kernel = 0;
-extern volatile int in_syscall;
-extern void print_color(const char *str, int row, unsigned char color);
+// Stacks are now allocated from PMM (above 1MB) to avoid ROM area
+static uint8_t *kstacks[MAX_TASKS];  // Pointers to PMM-allocated stacks
+static uint8_t *ustacks[MAX_TASKS];  // Pointers to PMM-allocated stacks
 
-static void dbg_sched_marker(char c) {
-    volatile unsigned short *vga = (volatile unsigned short *)0xB8000;
-    vga[18 * 80 + 0] = (0x0E << 8) | (unsigned short)c;
-}
+extern volatile int in_syscall;
 
 static void mem_zero(void *dst, uint64_t n) {
     uint8_t *d = (uint8_t *)dst;
     while (n--) *d++ = 0;
 }
 
+// Allocate contiguous pages for a stack from PMM
+static uint8_t *alloc_stack(int num_pages) {
+    // Allocate first page as base
+    uint8_t *base = (uint8_t *)pmm_alloc_page();
+    if (!base) return 0;
+
+    // Allocate remaining pages (they should be contiguous in our simple PMM)
+    for (int i = 1; i < num_pages; i++) {
+        uint8_t *page = (uint8_t *)pmm_alloc_page();
+        if (!page) return 0;  // Leak previous pages, but keeps it simple
+    }
+    return base;
+}
+
 void sched_init(void) {
     for (int i = 0; i < MAX_TASKS; i++) {
         tasks[i].state = TASK_STATE_UNUSED;
         tasks[i].next = 0;
+        kstacks[i] = 0;
+        ustacks[i] = 0;
     }
     runq = 0;
     current = 0;
     next_task_id = 1;
     sched_running = 0;
     sched_ready = 1;
-    sched_dbg_inited = 1;
 }
 
 static struct task *alloc_task(void) {
@@ -97,7 +98,6 @@ void sched_bootstrap_current(void) {
     t->is_user = 0;
     current = t;
     enqueue(t);
-    sched_dbg_bootstrap = 1;
 }
 
 struct task *sched_create_kernel(void (*entry)(void)) {
@@ -105,7 +105,13 @@ struct task *sched_create_kernel(void (*entry)(void)) {
     if (!t) return 0;
 
     int idx = task_index(t);
-    t->kernel_stack_base = (uint64_t)&kstacks[idx][0];
+    // Allocate kernel stack from PMM (above ROM area)
+    kstacks[idx] = alloc_stack(KSTACK_PAGES);
+    if (!kstacks[idx]) {
+        t->state = TASK_STATE_UNUSED;
+        return 0;
+    }
+    t->kernel_stack_base = (uint64_t)kstacks[idx];
     t->kernel_stack_top = t->kernel_stack_base + KSTACK_SIZE;
     paging_mark_supervisor_region(t->kernel_stack_base, KSTACK_SIZE);
 
@@ -122,7 +128,6 @@ struct task *sched_create_kernel(void (*entry)(void)) {
     t->is_user = 0;
 
     enqueue(t);
-    sched_dbg_created_kernel++;
     return t;
 }
 
@@ -133,21 +138,31 @@ struct task *sched_create_user(struct vfs_node *node, char **args) {
 
     uint64_t entry = 0;
     if (elf_load(node, &entry) < 0) {
-        print_color("elf_load fail", 20, 0x0C);
         t->state = TASK_STATE_UNUSED;
         return 0;
     }
-    print_color("elf_load ok", 20, 0x0A);
 
     int idx = task_index(t);
-    t->kernel_stack_base = (uint64_t)&kstacks[idx][0];
+    // Allocate kernel stack from PMM (above ROM area)
+    kstacks[idx] = alloc_stack(KSTACK_PAGES);
+    if (!kstacks[idx]) {
+        t->state = TASK_STATE_UNUSED;
+        return 0;
+    }
+    t->kernel_stack_base = (uint64_t)kstacks[idx];
     t->kernel_stack_top = t->kernel_stack_base + KSTACK_SIZE;
     paging_mark_supervisor_region(t->kernel_stack_base, KSTACK_SIZE);
 
-    t->user_stack_top = (uint64_t)&ustacks[idx][0] + USTACK_SIZE;
+    // Allocate user stack from PMM (above ROM area)
+    ustacks[idx] = alloc_stack(USTACK_PAGES);
+    if (!ustacks[idx]) {
+        t->state = TASK_STATE_UNUSED;
+        return 0;
+    }
+    t->user_stack_top = (uint64_t)ustacks[idx] + USTACK_SIZE;
     paging_mark_user_region(t->user_stack_top - USTACK_SIZE, USTACK_SIZE);
-    print_color("ustack ok", 21, 0x0A);
 
+    // Set up exit stub on user stack
     uint8_t *stack_top = (uint8_t *)t->user_stack_top;
     uint8_t *stub = stack_top - 32;
     uint32_t sys_exit = SYS_EXIT;
@@ -167,58 +182,33 @@ struct task *sched_create_user(struct vfs_node *node, char **args) {
     sp -= 8;
     *((uint64_t *)sp) = (uint64_t)stub;
 
+    // Set up interrupt frame for returning to user mode
     struct irq_frame_user *frame = (struct irq_frame_user *)(t->kernel_stack_top - sizeof(struct irq_frame_user));
-    mem_zero(frame, sizeof(*frame));
+    for (int i = 0; i < (int)(sizeof(struct irq_frame_user) / 8); i++) {
+        ((uint64_t *)frame)[i] = 0;
+    }
+
     frame->base.rip = entry;
-    frame->base.cs = 0x23;
-    frame->base.rflags = 0x202;
-    frame->base.int_no = 0;
-    frame->base.err_code = 0;
+    frame->base.cs = 0x23;       // User code segment
+    frame->base.rflags = 0x202;  // IF set
     frame->rsp = (uint64_t)sp;
-    frame->ss = 0x1B;
+    frame->ss = 0x1B;            // User data segment
 
     t->rsp = (uint64_t)frame;
     t->entry = entry;
     t->is_user = 1;
-    print_color("frame ok", 22, 0x0A);
 
     enqueue(t);
-    print_color("enq ok", 23, 0x0A);
-    sched_dbg_created_user++;
     return t;
 }
 
 struct irq_frame *sched_tick(struct irq_frame *frame) {
     if (!frame) return frame;
-    sched_dbg_ready = sched_ready ? 1 : 0;
-    sched_dbg_running = sched_running ? 1 : 0;
-    sched_dbg_has_runq = runq ? 1 : 0;
-    sched_dbg_has_current = current ? 1 : 0;
-    sched_dbg_in_syscall = in_syscall ? 1 : 0;
-
     if (!sched_ready || !runq || !current) return frame;
     if (in_syscall) return frame;
     if (!sched_running) return frame;
 
     current->rsp = (uint64_t)frame;
-
-    // Debug: count runnable tasks and user tasks in the run queue.
-    {
-        int count = 0;
-        int user = 0;
-        struct task *t = runq;
-        if (t) {
-            do {
-                if (t->state == TASK_STATE_RUNNABLE) {
-                    count++;
-                    if (t->is_user) user++;
-                }
-                t = t->next;
-            } while (t && t != runq && count < (MAX_TASKS + 1));
-        }
-        sched_dbg_runq = count;
-        sched_dbg_user = user;
-    }
 
     struct task *start = current;
     struct task *idle = 0;
@@ -240,12 +230,6 @@ struct irq_frame *sched_tick(struct irq_frame *frame) {
     if (current->kernel_stack_top) {
         tss_set_rsp0(current->kernel_stack_top);
     }
-    {
-        struct irq_frame *next = (struct irq_frame *)current->rsp;
-        sched_last_next_is_user = current->is_user;
-        sched_last_next_cs = next ? next->cs : 0;
-    }
-    dbg_sched_marker(current->is_user ? 'U' : 'K');
     return (struct irq_frame *)current->rsp;
 }
 

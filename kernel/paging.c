@@ -7,15 +7,18 @@
 #define PT_ENTRIES 512
 #define NUM_PT 8  // map first 16 MiB
 
-static uint64_t pml4[PT_ENTRIES] __attribute__((aligned(4096)));
-static uint64_t pdpt[PT_ENTRIES] __attribute__((aligned(4096)));
-static uint64_t pd[PT_ENTRIES]   __attribute__((aligned(4096)));
-static uint64_t pt[NUM_PT][PT_ENTRIES] __attribute__((aligned(4096)));
+uint64_t pml4[PT_ENTRIES] __attribute__((aligned(4096)));  // Non-static for debug
+uint64_t pdpt[PT_ENTRIES] __attribute__((aligned(4096)));  // Non-static for debug
+uint64_t pd[PT_ENTRIES]   __attribute__((aligned(4096)));  // Non-static for debug
+uint64_t pt[NUM_PT][PT_ENTRIES] __attribute__((aligned(4096)));  // Non-static for debug
 
 // Keep a pointer to kernel PML4 to copy into user spaces
-static uint64_t *kernel_pml4 = pml4;
+static uint64_t *kernel_pml4;
 
 void paging_init(void) {
+    // Initialize kernel_pml4 pointer
+    kernel_pml4 = pml4;
+
     // Zero tables
     for (int i = 0; i < PT_ENTRIES; i++) {
         pml4[i] = 0;
@@ -75,6 +78,10 @@ void paging_init(void) {
     __asm__ volatile ("mov %0, %%cr3" : : "r"(new_cr3) : "memory");
 }
 
+static inline void invlpg(uint64_t addr) {
+    __asm__ volatile ("invlpg (%0)" : : "r"(addr) : "memory");
+}
+
 void paging_mark_user_region(uint64_t addr, uint64_t size) {
     uint64_t start = addr & ~0xFFFULL;
     uint64_t end   = (addr + size + 0xFFFULL) & ~0xFFFULL;
@@ -83,6 +90,7 @@ void paging_mark_user_region(uint64_t addr, uint64_t size) {
         uint64_t pt_idx = (a >> 12) & 0x1FF;
         if (pd_idx < NUM_PT) {
             pt[pd_idx][pt_idx] |= PAGE_USER | PAGE_PRESENT;
+            invlpg(a);  // Flush TLB for this page
         }
     }
 }
@@ -96,6 +104,7 @@ void paging_mark_supervisor_region(uint64_t addr, uint64_t size) {
         if (pd_idx < NUM_PT) {
             pt[pd_idx][pt_idx] &= ~PAGE_USER;
             pt[pd_idx][pt_idx] |= PAGE_PRESENT | PAGE_WRITABLE;
+            invlpg(a);  // Flush TLB for this page
         }
     }
 }

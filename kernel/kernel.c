@@ -11,10 +11,10 @@
 #include "sched.h"
 #include "syscall.h"
 
-#define START_USER_TASK 1
+#define START_USER_TASK 0
 #define START_SCHEDULER 1
 #define START_IDLE_TASK 1
-#define START_SHELL 0
+#define START_SHELL 1
 
 // Video memory starts at 0xB8000
 // Each character: 2 bytes (char + color)

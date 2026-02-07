@@ -11,13 +11,13 @@ struct irq_frame {
     uint64_t rip;
     uint64_t cs;
     uint64_t rflags;
-} __attribute__((packed));
+};
 
 struct irq_frame_user {
     struct irq_frame base;
     uint64_t rsp;
     uint64_t ss;
-} __attribute__((packed));
+};
 
 void isr_handler(uint64_t int_no);
 struct irq_frame *irq_handler(uint64_t int_no, struct irq_frame *frame);

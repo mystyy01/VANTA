@@ -232,8 +232,8 @@ extern int exec_program(const char* path, char** args);
 
 static char input_buffer[512];
 
-// Cursor blink interval in PIT ticks (~18.2 ticks/sec, so 4 ≈ 0.22 sec)
-#define CURSOR_BLINK_TICKS 4
+// Cursor blink interval in PIT ticks (~18.2 ticks/sec, so 9 ≈ 0.5 sec)
+#define CURSOR_BLINK_TICKS 9
 
 // Simple line editor with cursor tracking, prompt-aware redraw, and blinking cursor.
 static char* shell_read_line(void) {
@@ -244,8 +244,6 @@ static char* shell_read_line(void) {
     int len = 0;          // line length
     int pos = 0;          // cursor position within line
     int rendered_len = 0; // previously drawn length
-    int cursor_visible = 1;
-    uint64_t last_blink_tick = system_ticks;
 
     // Redraw line content (not cursor)
     void redraw_line(void) {
@@ -259,31 +257,28 @@ static char* shell_read_line(void) {
         rendered_len = len;
     }
 
-    // Draw cursor at current position
+    // Draw cursor at current position using color inversion
     void draw_cursor(int visible) {
         int abs_pos = prompt_col + pos;
         int row = prompt_row + (abs_pos / VGA_WIDTH);
         int col = abs_pos % VGA_WIDTH;
         volatile uint16_t *cell = VGA_BUFFER + (row * VGA_WIDTH) + col;
-        uint16_t color = *cell & 0xFF00;
         char ch = (pos < len) ? input_buffer[pos] : ' ';
 
-        *cell = color | (uint8_t)(visible ? '_' : ch);
+        if (visible) {
+            // Inverted colors: white background (0x70), black text
+            *cell = (0x70 << 8) | (uint8_t)ch;
+        } else {
+            // Normal colors: black background (0x00), white text (0x0F)
+            *cell = (0x0F << 8) | (uint8_t)ch;
+        }
         set_cursor(row, col);
     }
 
     // Initial draw
-    draw_cursor(cursor_visible);
+    draw_cursor(1);
 
     while (1) {
-        // Check for cursor blink
-        uint64_t now = system_ticks;
-        if (now - last_blink_tick >= CURSOR_BLINK_TICKS) {
-            cursor_visible = !cursor_visible;
-            draw_cursor(cursor_visible);
-            last_blink_tick = now;
-        }
-
         // Poll for keyboard event (non-blocking)
         struct key_event ev;
         if (!keyboard_poll_event(&ev)) {
@@ -342,18 +337,16 @@ static char* shell_read_line(void) {
                 redraw_line();
             }
         } else {
-            continue;  // Unknown key, don't reset blink
+            continue;  // Unknown key
         }
 
-        // Reset blink state on any input (cursor visible)
-        cursor_visible = 1;
-        last_blink_tick = system_ticks;
-        draw_cursor(cursor_visible);
+        // Redraw cursor after input
+        draw_cursor(1);
     }
 }
 
 int shell_main(void) {
-    // cmd_clear();
+    cmd_clear();
     disable_hw_cursor();
     mt_print("phobos-shell v0.2 - PHOBOS\n");
     mt_print("Type 'help' for available commands\n\n");
