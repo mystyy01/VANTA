@@ -1,8 +1,8 @@
-# Claude Code
-CLAUDE.md
-
+# Build artifacts
 *.o
-**/**.o
 *.bin
 *.elf
-*
+*.img
+
+# Claude Code
+CLAUDE.md
