@@ -345,6 +345,102 @@ int elf_execute(struct vfs_node *node, char **args) {
     return ret;
 }
 
+// ============================================================================
+// Per-process ELF loading (new: allocates fresh pages, maps at p_vaddr)
+// ============================================================================
+
+static int load_segments_mapped(const Elf64_Ehdr *eh, uint64_t *user_pml4) {
+    const uint8_t *base = (const uint8_t *)eh;
+    const uint8_t *ph_base = base + eh->e_phoff;
+
+    for (uint16_t i = 0; i < eh->e_phnum; i++) {
+        const Elf64_Phdr *ph = (const Elf64_Phdr *)(ph_base + i * eh->e_phentsize);
+        if (ph->p_type != PT_LOAD) continue;
+
+        uint64_t vaddr  = ph->p_vaddr;
+        uint64_t memsz  = ph->p_memsz;
+        uint64_t filesz = ph->p_filesz;
+
+        if (memsz == 0) continue;
+
+        // For each page covered by this segment: allocate, copy, map
+        uint64_t seg_start = vaddr & ~0xFFFULL;
+        uint64_t seg_end   = (vaddr + memsz + 0xFFFULL) & ~0xFFFULL;
+
+        for (uint64_t va = seg_start; va < seg_end; va += 0x1000) {
+            // Skip if already mapped (segments may share a page)
+            if (paging_virt_to_phys(user_pml4, va)) continue;
+
+            void *page = pmm_alloc_page();
+            if (!page) return -20;
+            memset_local(page, 0, 4096);
+
+            // Copy the file-backed portion that falls in this page
+            uint64_t file_start = vaddr;
+            uint64_t file_end   = vaddr + filesz;
+            uint64_t pg_start   = va;
+            uint64_t pg_end     = va + 0x1000;
+
+            uint64_t copy_lo = (pg_start > file_start) ? pg_start : file_start;
+            uint64_t copy_hi = (pg_end   < file_end)   ? pg_end   : file_end;
+
+            if (copy_lo < copy_hi) {
+                uint64_t src_off = copy_lo - vaddr;        // offset into segment data
+                uint64_t dst_off = copy_lo - va;           // offset into physical page
+                memcpy_local((uint8_t *)page + dst_off,
+                             base + ph->p_offset + src_off,
+                             (uint32_t)(copy_hi - copy_lo));
+            }
+
+            uint64_t flags = PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
+            if (paging_map_user_page(user_pml4, va, (uint64_t)page, flags) < 0)
+                return -21;
+        }
+    }
+    return 0;
+}
+
+int elf_load_into(struct vfs_node *node, uint64_t *user_pml4, uint64_t *entry_out) {
+    if (!node || !(node->flags & VFS_FILE)) return -10;
+
+    if (elf_loader_init() < 0) {
+        print_str("exec: failed to allocate buffers\n");
+        return -14;
+    }
+
+    if (node->size > ELF_MAX_SIZE) {
+        print_str("exec: file too large\n");
+        return -11;
+    }
+
+    int read = vfs_read(node, 0, node->size, elf_file_buf);
+    if (read < 0 || (uint32_t)read < node->size) {
+        print_str("exec: read failed\n");
+        return -12;
+    }
+
+    Elf64_Ehdr *eh = (Elf64_Ehdr *)elf_file_buf;
+    int hv = validate_header(eh);
+    if (hv != 0) {
+        print_str("exec: invalid ELF (");
+        print_int(hv);
+        print_str(")\n");
+        return hv;
+    }
+
+    if (load_segments_mapped(eh, user_pml4) < 0) {
+        print_str("exec: segment mapping failed\n");
+        return -13;
+    }
+
+    if (entry_out) *entry_out = eh->e_entry;
+    return 0;
+}
+
+// ============================================================================
+// Legacy identity-mapped loader (kept for backward compat)
+// ============================================================================
+
 int elf_load(struct vfs_node *node, uint64_t *entry_out) {
     if (!node || !(node->flags & VFS_FILE)) return -10;
 

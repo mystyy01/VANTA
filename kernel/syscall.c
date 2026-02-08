@@ -3,6 +3,9 @@
 #include "fs/vfs.h"
 #include "elf_loader.h"
 #include "sched.h"
+#include "paging.h"
+#include "pmm.h"
+#include "isr.h"
 
 // ============================================================================
 // Console I/O (reuse mt-shell VGA writer so cursor stays consistent)
@@ -99,7 +102,10 @@ void syscall_init(void) {
 // Syscall handler
 // ============================================================================
 
-volatile int in_syscall = 0;
+// User context saved by syscall_entry.asm — used by fork() in sched.c
+extern uint64_t user_ctx_rsp;
+extern uint64_t user_ctx_rip;
+extern uint64_t user_ctx_rflags;
 
 uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
                          uint64_t arg3, uint64_t arg4, uint64_t arg5) {
@@ -109,12 +115,7 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
 
         case SYS_EXIT: {
             int exit_code = (int)arg1;
-            struct task *t = sched_current();
-            if (t && t->is_user) {
-                sched_exit(exit_code);
-                __builtin_unreachable();
-            }
-            kernel_return_from_user(exit_code);
+            sched_exit(exit_code);
             __builtin_unreachable();
             return 0;
         }
@@ -179,6 +180,13 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
                 }
                 return to_write;
             }
+            if (entry->type == FD_FILE && entry->node) {
+                int bytes = vfs_write(entry->node, entry->offset, count, (const uint8_t *)buf);
+                if (bytes > 0) {
+                    entry->offset += bytes;
+                }
+                return bytes;
+            }
             return -1;
         }
 
@@ -190,7 +198,16 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
             build_path(path, full_path);
 
             struct vfs_node *node = vfs_resolve_path(full_path);
+            if (!node && (flags & O_CREAT)) {
+                fat32_touch_path(full_path);
+                node = vfs_resolve_path(full_path);
+            }
             if (!node) return -1;
+
+            if ((flags & O_TRUNC) && (node->flags & VFS_FILE)) {
+                fat32_truncate(node, 0);
+            }
+
             struct task *t = sched_current();
             int fd = task_fd_alloc(t);
 
@@ -219,8 +236,11 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
             if (fd < 0) return -1;
             struct fd_entry *entry = task_fd_get(t, fd);
             if (!entry || fd < 3) return -1;
+            if (entry->type == FD_FILE && entry->node) {
+                fat32_flush_size(entry->node);
+            }
             if (entry->type == FD_PIPE && entry->pipe) {
-                if (entry->flags == O_RDONLY) {                                                                                                                                                 
+                if (entry->flags == O_RDONLY) {
                     entry->pipe->read_open = 0;
                 } else if (entry->flags == O_WRONLY) {
                     entry->pipe->write_open = 0;
@@ -427,6 +447,28 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2,
             if (t->fd_table[newfd].type != FD_UNUSED) task_fd_free(t, newfd); 
             t->fd_table[newfd] = t->fd_table[oldfd];
             return newfd;
+        }
+
+        case SYS_FORK: {
+            return (uint64_t)sched_fork();
+        }
+
+        case SYS_EXEC: {
+            const char *path = (const char *)arg1;
+            // For now exec is not implemented as a syscall
+            // (shell uses kernel-level sched_spawn instead)
+            (void)path;
+            return -1;
+        }
+
+        case SYS_WAITPID: {
+            int pid = (int)arg1;
+            return sched_waitpid(pid);
+        }
+
+        case SYS_GETPID: {
+            struct task *t = sched_current();
+            return t ? (uint64_t)t->id : 0;
         }
 
         default:

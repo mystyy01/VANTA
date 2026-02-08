@@ -92,6 +92,7 @@ int fat32_rmdir(struct vfs_node *parent, const char *name);
 int fat32_rename(struct vfs_node *old_parent, const char *old_name,
                  struct vfs_node *new_parent, const char *new_name);
 int fat32_truncate(struct vfs_node *node, int size);
+int fat32_flush_size(struct vfs_node *node);
 
 // Path-based helpers for userland commands (rm, rmdir, touch, ls, mv)
 int fat32_touch_path(const char *path);

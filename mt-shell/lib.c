@@ -4,6 +4,7 @@
 #include "../kernel/drivers/keyboard.h"
 #include "../kernel/fs/vfs.h"
 #include "../kernel/elf_loader.h"
+#include "../kernel/sched.h"
 
 // ============================================================================
 // Memory Allocator (bump allocator with static buffer)
@@ -617,13 +618,17 @@ char* list_dir(const char* path) {
 }
 
 // ============================================================================
-// Program Execution (placeholder - needs ELF loader)
+// Program Execution — spawn child process and wait for it
 // ============================================================================
 
 int exec_program(const char* path, char** args) {
-    struct vfs_node* node = vfs_resolve_path(path);
-    if (!node || !(node->flags & VFS_FILE)) {
-        return -1;  // Not found or not a file
-    }
-    return elf_execute(node, args);
+    int pid = sched_spawn(path, args, 0);
+    if (pid < 0) return -1;
+    return sched_waitpid(pid);
+}
+
+// Spawn a program with a custom FD table (for pipe redirection).
+// Returns child PID or -1.
+int exec_program_fd(const char* path, char** args, struct fd_entry *fds) {
+    return sched_spawn(path, args, fds);
 }

@@ -12,7 +12,7 @@ static uint8_t cluster_buffer[CLUSTER_BUFFER_SIZE];  // Max 4KB cluster
 static struct dirent dirent_buf;
 
 // Node cache (simple, fixed size)
-#define NODE_CACHE_SIZE 32
+#define NODE_CACHE_SIZE 64
 static struct vfs_node node_cache[NODE_CACHE_SIZE];
 static int node_cache_used = 0;
 
@@ -129,6 +129,7 @@ static uint32_t find_free_cluster(){
 // Forward declaration
 static void string_to_fat32_name(const char *str, uint8_t *fat_name);
 static int fat32_read(struct vfs_node *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+static int fat32_write(struct vfs_node *node, uint32_t offset, uint32_t size, const uint8_t *buffer);
 static struct dirent *fat32_readdir(struct vfs_node *node, uint32_t index);
 static struct vfs_node *fat32_finddir(struct vfs_node *node, const char *name);
 static int is_end_of_chain(uint32_t cluster);
@@ -359,7 +360,11 @@ struct vfs_node *fat32_create_file(struct vfs_node *parent, const char *name) {
     slot->file_size = 0;
 
     write_cluster(slot_cluster, cluster_buffer);
-    return fat32_finddir(parent, name);
+    struct vfs_node *node = fat32_finddir(parent, name);
+    if (node) {
+        node->private_data = (void *)(uintptr_t)parent->inode;
+    }
+    return node;
 }
 
 int fat32_unlink(struct vfs_node *parent, const char *name) {
@@ -582,6 +587,7 @@ static void string_to_fat32_name(const char *str, uint8_t *fat_name) {
 
 // Forward declarations
 static int fat32_read(struct vfs_node *node, uint32_t offset, uint32_t size, uint8_t *buffer);
+static int fat32_write(struct vfs_node *node, uint32_t offset, uint32_t size, const uint8_t *buffer);
 static struct dirent *fat32_readdir(struct vfs_node *node, uint32_t index);
 static struct vfs_node *fat32_finddir(struct vfs_node *node, const char *name);
 
@@ -593,14 +599,26 @@ static struct vfs_node *alloc_node(void) {
     return 0;  // Cache full
 }
 
-// Create a VFS node from directory entry
+// Create a VFS node from directory entry (with cache deduplication)
 static struct vfs_node *create_node(struct fat32_dir_entry *entry) {
+    uint32_t cluster = (entry->first_cluster_high << 16) | entry->first_cluster_low;
+
+    // Reuse existing node if same cluster is already cached
+    if (cluster >= 2) {
+        for (int i = 0; i < node_cache_used; i++) {
+            if (node_cache[i].inode == cluster) {
+                // Update with latest on-disk info
+                fat32_name_to_string(entry->name, node_cache[i].name);
+                node_cache[i].size = entry->file_size;
+                return &node_cache[i];
+            }
+        }
+    }
+
     struct vfs_node *node = alloc_node();
     if (!node) return 0;
 
     fat32_name_to_string(entry->name, node->name);
-
-    uint32_t cluster = (entry->first_cluster_high << 16) | entry->first_cluster_low;
 
     node->inode = cluster;
     node->size = entry->file_size;
@@ -615,7 +633,7 @@ static struct vfs_node *create_node(struct fat32_dir_entry *entry) {
     } else {
         node->flags = VFS_FILE;
         node->read = fat32_read;
-        node->write = 0;  // Read-only for now
+        node->write = fat32_write;
         node->readdir = 0;
         node->finddir = 0;
     }
@@ -663,6 +681,118 @@ static int fat32_read(struct vfs_node *node, uint32_t offset, uint32_t size, uin
     }
 
     return bytes_read;
+}
+
+// Write file contents
+static int fat32_write(struct vfs_node *node, uint32_t offset, uint32_t size, const uint8_t *buffer) {
+    if (!node || !(node->flags & VFS_FILE)) return -1;
+    if (size == 0) return 0;
+    if (fs.bytes_per_cluster == 0 || fs.bytes_per_cluster > CLUSTER_BUFFER_SIZE) return -1;
+
+    uint32_t cluster = node->inode;
+    uint32_t bytes_written = 0;
+    uint32_t file_pos = 0;
+
+    // If the file has no clusters yet, allocate the first one
+    if (cluster < 2) {
+        cluster = alloc_cluster_zeroed();
+        if (cluster == 0) return -1;
+        node->inode = cluster;
+    }
+
+    // Walk cluster chain to the cluster containing offset
+    while (file_pos + fs.bytes_per_cluster <= offset) {
+        uint32_t next = get_next_cluster(cluster);
+        if (is_end_of_chain(next)) {
+            // Need to extend: allocate a new cluster
+            uint32_t new_cl = alloc_cluster_zeroed();
+            if (new_cl == 0) return bytes_written > 0 ? (int)bytes_written : -1;
+            append_cluster(cluster, new_cl);
+            next = new_cl;
+        }
+        file_pos += fs.bytes_per_cluster;
+        cluster = next;
+    }
+
+    // Write data cluster by cluster
+    while (bytes_written < size) {
+        read_cluster(cluster, cluster_buffer);
+
+        uint32_t cluster_offset = 0;
+        if (file_pos < offset) {
+            cluster_offset = offset - file_pos;
+        }
+
+        uint32_t to_copy = fs.bytes_per_cluster - cluster_offset;
+        if (to_copy > size - bytes_written) {
+            to_copy = size - bytes_written;
+        }
+
+        memcpy(cluster_buffer + cluster_offset, buffer + bytes_written, to_copy);
+        write_cluster(cluster, cluster_buffer);
+
+        bytes_written += to_copy;
+        file_pos += fs.bytes_per_cluster;
+
+        if (bytes_written < size) {
+            uint32_t next = get_next_cluster(cluster);
+            if (is_end_of_chain(next)) {
+                uint32_t new_cl = alloc_cluster_zeroed();
+                if (new_cl == 0) break;
+                append_cluster(cluster, new_cl);
+                next = new_cl;
+            }
+            cluster = next;
+        }
+    }
+
+    // Update in-memory size if we wrote past the old end
+    if (offset + bytes_written > node->size) {
+        node->size = offset + bytes_written;
+    }
+
+    return (int)bytes_written;
+}
+
+// Flush file size and first cluster back to the on-disk directory entry.
+// Uses private_data (parent dir cluster) to locate the entry.
+int fat32_flush_size(struct vfs_node *node) {
+    if (!node || !(node->flags & VFS_FILE)) return -1;
+
+    uint32_t parent_cluster = (uint32_t)(uintptr_t)node->private_data;
+    if (parent_cluster < 2) return -1;
+
+    // Convert node name back to FAT 8.3 format for lookup
+    uint8_t fat_name[11];
+    string_to_fat32_name(node->name, fat_name);
+
+    // Walk the parent directory cluster chain to find our entry
+    uint32_t cluster = parent_cluster;
+    while (!is_end_of_chain(cluster)) {
+        read_cluster(cluster, cluster_buffer);
+
+        int entries_per_cluster = fs.bytes_per_cluster / sizeof(struct fat32_dir_entry);
+        struct fat32_dir_entry *entries = (struct fat32_dir_entry *)cluster_buffer;
+
+        for (int i = 0; i < entries_per_cluster; i++) {
+            struct fat32_dir_entry *entry = &entries[i];
+            if (entry->name[0] == 0x00) return -1; // end of dir
+            if (entry->name[0] == 0xE5) continue;
+            if ((entry->attr & FAT32_ATTR_LFN) == FAT32_ATTR_LFN) continue;
+
+            if (strncmp((char *)entry->name, (char *)fat_name, 11) == 0) {
+                // Update size and first cluster
+                entry->file_size = node->size;
+                entry->first_cluster_low = node->inode & 0xFFFF;
+                entry->first_cluster_high = (node->inode >> 16) & 0xFFFF;
+                write_cluster(cluster, cluster_buffer);
+                return 0;
+            }
+        }
+        cluster = get_next_cluster(cluster);
+    }
+
+    return -1;
 }
 
 // Read directory entry by index
@@ -744,7 +874,11 @@ static struct vfs_node *fat32_finddir(struct vfs_node *node, const char *name) {
 
             // Check name match
             if (strncmp((char *)entry->name, (char *)fat_name, 11) == 0) {
-                return create_node(entry);
+                struct vfs_node *child = create_node(entry);
+                if (child) {
+                    child->private_data = (void *)(uintptr_t)node->inode;
+                }
+                return child;
             }
         }
 

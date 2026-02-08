@@ -27,7 +27,11 @@
 #define SYS_SEEK      16  // seek(int fd, int offset, int whence) -> new offset or -1
 #define SYS_YIELD     17  // yield() -> 0
 #define SYS_PIPE      18  // pipe(int fds[2]) -> 0 or -1
-#define SYS_DUP2      19  //dup2(int oldfd, int newfd) -> newfd or -1
+#define SYS_DUP2      19  // dup2(int oldfd, int newfd) -> newfd or -1
+#define SYS_FORK      20  // fork() -> child pid to parent, 0 to child
+#define SYS_EXEC      21  // exec(char *path, char **argv) -> -1 on error
+#define SYS_WAITPID   22  // waitpid(int pid) -> exit code or -1
+#define SYS_GETPID    23  // getpid() -> current pid
 
 // ============================================================================
 // Open Flags
@@ -217,6 +221,22 @@ static inline int pipe(int fds[2]){
 }
 static inline int dup2(int oldfd, int newfd){
     return (int)syscall2(SYS_DUP2, oldfd, newfd);
+}
+
+static inline int fork(void) {
+    return (int)syscall0(SYS_FORK);
+}
+
+static inline int exec(const char *path, char **argv) {
+    return (int)syscall2(SYS_EXEC, (long)path, (long)argv);
+}
+
+static inline int waitpid(int pid) {
+    return (int)syscall1(SYS_WAITPID, pid);
+}
+
+static inline int getpid(void) {
+    return (int)syscall0(SYS_GETPID);
 }
 
 #endif // LIBSYS_H

@@ -9,6 +9,7 @@ struct irq_frame;
 #define TASK_STATE_UNUSED   0
 #define TASK_STATE_RUNNABLE 1
 #define TASK_STATE_ZOMBIE   2
+#define TASK_STATE_WAITING  3   // Blocked on waitpid
 
 // ============================================================================
 // Per-process file descriptor table
@@ -53,6 +54,11 @@ struct task {
     int state;
     struct task *next;
 
+    // Process relationships
+    int parent_id;          // Parent task ID (0 = no parent)
+    int exit_code;          // Saved exit code (valid when ZOMBIE)
+    int waiting_for;        // PID we're blocking on (-1 = none)
+
     // Per-process state
     struct fd_entry fd_table[MAX_FDS];
     char cwd[VFS_MAX_PATH];
@@ -86,6 +92,22 @@ void sched_exit(int code);
 
 // Current task pointer
 struct task *sched_current(void);
+
+// Spawn a new user task from an ELF on disk.  If fd_overrides is non-NULL,
+// the child inherits that FD table instead of the default console FDs.
+// Returns child PID (>0) or -1 on failure.
+int sched_spawn(const char *path, char **args, struct fd_entry *fd_overrides);
+
+// Block current task until child with given PID exits.
+// Returns the child's exit code, or -1 on error.
+int sched_waitpid(int pid);
+
+// Fork the current user task. Returns child PID to caller (parent).
+// The child will be set up to return 0 from the syscall.
+int sched_fork(void);
+
+// Look up a task by its ID. Returns NULL if not found.
+struct task *sched_get_task(int pid);
 
 // Per-process FD table helpers
 void task_fd_init(struct task *t);
